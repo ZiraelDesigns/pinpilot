@@ -54,3 +54,7 @@ def test_dashboard_shows_empty_counts():
     assert 'id="generated-pins-count">0<' in response.text
     assert 'id="scheduled-pins-count">0<' in response.text
     assert 'id="published-pins-count">0<' in response.text
+    assert 'id="today-prepared-pins-count">0<' in response.text
+    assert 'id="mockup-scheduled-pins-count">0<' in response.text
+    assert 'id="ai-scheduled-pins-count">0<' in response.text
+    assert 'id="pending-ai-jobs-count">0<' in response.text

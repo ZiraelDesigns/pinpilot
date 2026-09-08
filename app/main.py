@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -9,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.config import PROJECT_ROOT, settings
 from app.database import Base, engine, get_db
-from app.models import EtsyAccount, Pin, PinCreative, PinterestAccount, PinterestBoard, Product
-from app.models.core import PinStatus
+from app.models import EtsyAccount, Pin, PinCreative, PinGenerationJob, PinterestAccount, PinterestBoard, Product
+from app.models.core import PinCreativeSourceType, PinStatus
 from app.routers.etsy import router as etsy_router
 from app.routers.pinterest import router as pinterest_router
 from app.routers.creatives import router as creatives_router
@@ -45,6 +46,14 @@ async def lifespan(_: FastAPI):
                 "CREATE UNIQUE INDEX IF NOT EXISTS ix_pins_creative_id_unique "
                 "ON pins (creative_id) WHERE creative_id IS NOT NULL"
             ))
+    if "pin_generation_jobs" in inspector.get_table_names():
+        job_columns = {column["name"] for column in inspector.get_columns("pin_generation_jobs")}
+        if "requested_count" not in job_columns:
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "ALTER TABLE pin_generation_jobs "
+                    "ADD COLUMN requested_count INTEGER NOT NULL DEFAULT 1"
+                ))
     yield
 
 
@@ -85,6 +94,37 @@ def dashboard(
             select(func.count()).select_from(Pin).where(Pin.status == PinStatus.PUBLISHED.value)
         ) or 0,
     }
+    today_start = datetime.combine(datetime.now().date(), datetime.min.time())
+    today_end = today_start + timedelta(days=1)
+    queue_counts = {
+        "today_prepared": db.scalar(
+            select(func.count()).select_from(Pin).where(
+                Pin.scheduled_for >= today_start,
+                Pin.scheduled_for < today_end,
+                Pin.status.in_((PinStatus.SCHEDULED.value, PinStatus.PUBLISHED.value)),
+            )
+        ) or 0,
+        "scheduled": counts["scheduled_pins"],
+        "mockup": db.scalar(
+            select(func.count()).select_from(Pin).join(PinCreative).where(
+                Pin.scheduled_for >= today_start,
+                Pin.scheduled_for < today_end,
+                PinCreative.source_type == PinCreativeSourceType.MOCKUP.value,
+            )
+        ) or 0,
+        "ai": db.scalar(
+            select(func.count()).select_from(Pin).join(PinCreative).where(
+                Pin.scheduled_for >= today_start,
+                Pin.scheduled_for < today_end,
+                PinCreative.source_type == PinCreativeSourceType.AI.value,
+            )
+        ) or 0,
+        "pending_ai_jobs": db.scalar(
+            select(func.count()).select_from(PinGenerationJob).where(
+                PinGenerationJob.status == "pending"
+            )
+        ) or 0,
+    }
     etsy_account = db.query(EtsyAccount).filter_by(is_active=True).first()
     pinterest_account = db.query(PinterestAccount).filter_by(is_active=True).first()
     pinterest_boards = (
@@ -99,6 +139,7 @@ def dashboard(
         name="dashboard.html",
         context={
             "counts": counts,
+            "queue_counts": queue_counts,
             "etsy_account": etsy_account,
             "etsy_message": etsy_message,
             "etsy_error": etsy_error,

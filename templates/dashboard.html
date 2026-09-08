@@ -16,6 +16,17 @@
         <article><span>Scheduled pins</span><strong id="scheduled-pins-count">{{ counts.scheduled_pins }}</strong></article>
         <article><span>Published pins</span><strong id="published-pins-count">{{ counts.published_pins }}</strong></article>
       </section>
+      <section class="etsy-connection" aria-label="Daily Pin queue">
+        <h2>Bugünün Pin Kuyruğu</h2>
+        <section class="cards" aria-label="Daily queue counts">
+          <article><span>Bugün hazırlanan</span><strong id="today-prepared-pins-count">{{ queue_counts.today_prepared }}</strong></article>
+          <article><span>Scheduled</span><strong id="queue-scheduled-pins-count">{{ queue_counts.scheduled }}</strong></article>
+          <article><span>Mockup kaynaklı</span><strong id="mockup-scheduled-pins-count">{{ queue_counts.mockup }}</strong></article>
+          <article><span>AI kaynaklı</span><strong id="ai-scheduled-pins-count">{{ queue_counts.ai }}</strong></article>
+          <article><span>Pending AI jobs</span><strong id="pending-ai-jobs-count">{{ queue_counts.pending_ai_jobs }}</strong></article>
+        </section>
+        <p>Günlük hedef 15 Pin: 09:00, 12:00, 15:00, 18:00 ve 21:00 saatlerinde üçer Pin planlanır.</p>
+      </section>
       <section class="etsy-connection" aria-label="Generate Pin creatives">
         <h2>Generate Pin Ideas</h2>
         {% if products %}

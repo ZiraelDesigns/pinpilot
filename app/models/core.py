@@ -74,6 +74,9 @@ class PinGenerationJob(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"))
+    # One queued job may request more than one local creative without invoking a
+    # provider from the scheduler itself.
+    requested_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -13,11 +13,12 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Pin, PinCreative, PinGenerationJob
+from app.models import Pin, PinCreative, PinGenerationJob, Product
 from app.models.core import PinCreativeSourceType, PinCreativeStatus, PinStatus
 
 
 DAILY_PIN_TARGET = 15
+SCHEDULE_HOURS = (9, 12, 15, 18, 21)
 _ELIGIBLE_CREATIVE_STATUSES = (
     PinCreativeStatus.DRAFT.value,
     PinCreativeStatus.APPROVED.value,
@@ -33,6 +34,7 @@ class DailyScheduleResult:
     prepared: tuple[Pin, ...]
     mockups_prepared: int
     ai_prepared: int
+    ai_jobs_created: int
     pending_ai_jobs: int
 
     @property
@@ -77,6 +79,7 @@ class DailyPinScheduler:
                 prepared=(),
                 mockups_prepared=0,
                 ai_prepared=0,
+                ai_jobs_created=0,
                 pending_ai_jobs=pending_jobs,
             )
 
@@ -123,6 +126,8 @@ class DailyPinScheduler:
             for index, creative in enumerate(selected)
         )
         self.db.add_all(prepared)
+        shortage = slots_needed - len(prepared)
+        ai_jobs_created = self._queue_missing_ai_work(shortage, selected)
         self.db.commit()
 
         return DailyScheduleResult(
@@ -137,8 +142,39 @@ class DailyPinScheduler:
                 creative.source_type == PinCreativeSourceType.AI.value
                 for creative in selected
             ),
-            pending_ai_jobs=pending_jobs,
+            ai_jobs_created=ai_jobs_created,
+            pending_ai_jobs=self.db.query(PinGenerationJob).filter_by(status="pending").count(),
         )
+
+    def _queue_missing_ai_work(
+        self, shortage: int, selected: list[PinCreative]
+    ) -> int:
+        """Queue only uncovered creative capacity; never execute it here."""
+        if shortage <= 0:
+            return 0
+
+        pending_capacity = sum(
+            job.requested_count
+            for job in self.db.scalars(
+                select(PinGenerationJob).where(PinGenerationJob.status == "pending")
+            )
+        )
+        missing_capacity = max(0, shortage - pending_capacity)
+        if not missing_capacity:
+            return 0
+
+        product = selected[0].product if selected else self.db.scalars(
+            select(Product).order_by(Product.id)
+        ).first()
+        if not product:
+            return 0
+
+        self.db.add(PinGenerationJob(
+            product_id=product.id,
+            requested_count=missing_capacity,
+            status="pending",
+        ))
+        return 1
 
     @staticmethod
     def _candidate_sort_key(creative: PinCreative) -> tuple[int, int, datetime, int]:
@@ -149,19 +185,24 @@ class DailyPinScheduler:
     def _pin_from_creative(
         self, creative: PinCreative, target_date: date, slot_index: int
     ) -> Pin:
-        # Fifteen evenly spaced local slots from 08:00 to 22:00. This is a
-        # planning timestamp only; nothing is sent to Pinterest here.
-        minutes_between_slots = (14 * 60) / max(self.daily_target - 1, 1)
-        scheduled_for = datetime.combine(target_date, time(hour=8)) + timedelta(
-            minutes=round(slot_index * minutes_between_slots)
+        # The fixed production queue is 3 Pins at each of 09:00, 12:00, 15:00,
+        # 18:00 and 21:00. This is planning data only, never a Pinterest call.
+        hour = SCHEDULE_HOURS[min(slot_index // 3, len(SCHEDULE_HOURS) - 1)]
+        scheduled_for = datetime.combine(target_date, time(hour=hour))
+        product = creative.product
+        title = (creative.title or "").strip() or (product.title or "").strip() or "Etsy product"
+        description = (
+            (creative.description or "").strip()
+            or (product.description or "").strip()
+            or f"Explore {title} and view the product details."
         )
         return Pin(
             product_id=creative.product_id,
             creative_id=creative.id,
-            title=creative.title,
-            description=creative.description,
-            image_path=creative.image_path,
-            destination_url=creative.destination_url,
+            title=title[:255],
+            description=description,
+            image_path=creative.image_path or creative.source_image_url or product.image_url,
+            destination_url=creative.destination_url or product.url,
             status=PinStatus.SCHEDULED.value,
             scheduled_for=scheduled_for,
         )

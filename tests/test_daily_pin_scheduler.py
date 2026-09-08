@@ -1,3 +1,4 @@
+from collections import Counter
 from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -75,12 +76,65 @@ def test_mockup_pool_fills_daily_target_without_ai_generation(monkeypatch):
             assert result.pending_ai_jobs == pending_before
             assert {pin.creative_id for pin in result.prepared}.__len__() == 15
             assert all(pin.creative.source_type == PinCreativeSourceType.MOCKUP.value for pin in result.prepared)
+            assert Counter(pin.scheduled_for.hour for pin in result.prepared) == {
+                9: 3, 12: 3, 15: 3, 18: 3, 21: 3,
+            }
             db.refresh(job)
             assert job.status == "pending"
 
             rerun = DailyPinScheduler(db).schedule_daily(date(2035, 1, 1))
             assert rerun.already_prepared == 15
             assert rerun.prepared == ()
+        finally:
+            _cleanup(db, product)
+            db.close()
+
+
+def test_ai_pool_fills_daily_target_when_no_mockups_exist(monkeypatch):
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("Scheduler must not invoke an AI provider")
+
+    monkeypatch.setattr(AIContentService, "generate", fail_if_called)
+    with TestClient(app):
+        db = SessionLocal()
+        product, _ = _product_with_creatives(db, ai_count=20)
+        try:
+            result = DailyPinScheduler(db).schedule_daily(date(2035, 1, 6))
+
+            assert len(result.prepared) == 15
+            assert result.mockups_prepared == 0
+            assert result.ai_prepared == 15
+            assert all(pin.creative.source_type == "ai" for pin in result.prepared)
+            assert result.ai_jobs_created == 0
+        finally:
+            _cleanup(db, product)
+            db.close()
+
+
+def test_shortfall_queues_pending_ai_capacity_without_provider_call(monkeypatch):
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("Scheduler must never execute AI generation")
+
+    monkeypatch.setattr(AIContentService, "generate", fail_if_called)
+    with TestClient(app):
+        db = SessionLocal()
+        product, _ = _product_with_creatives(db, mockup_count=2)
+        try:
+            first = DailyPinScheduler(db).schedule_daily(date(2035, 1, 7))
+            pending = db.query(PinGenerationJob).filter_by(status="pending").all()
+
+            assert len(first.prepared) == 2
+            assert first.mockups_prepared == 2
+            assert first.ai_prepared == 0
+            assert first.ai_jobs_created == 1
+            assert len(pending) == 1
+            assert pending[0].product_id == product.id
+            assert pending[0].requested_count == 13
+
+            rerun = DailyPinScheduler(db).schedule_daily(date(2035, 1, 7))
+            assert rerun.prepared == ()
+            assert rerun.ai_jobs_created == 0
+            assert db.query(PinGenerationJob).filter_by(status="pending").count() == 1
         finally:
             _cleanup(db, product)
             db.close()
