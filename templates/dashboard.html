@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PinPilot Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main>
+      <h1>PinPilot</h1>
+      <p class="subtitle">Local dashboard foundation</p>
+      <section class="cards" aria-label="Dashboard counts">
+        <article><span>Products</span><strong id="products-count">{{ counts.products }}</strong></article>
+        <article><span>Generated pins</span><strong id="generated-pins-count">{{ counts.generated_pins }}</strong></article>
+        <article><span>Scheduled pins</span><strong id="scheduled-pins-count">{{ counts.scheduled_pins }}</strong></article>
+        <article><span>Published pins</span><strong id="published-pins-count">{{ counts.published_pins }}</strong></article>
+      </section>
+      <section class="etsy-connection" aria-label="Generate Pin creatives">
+        <h2>Generate Pin Ideas</h2>
+        {% if products %}
+          <form id="creative-generate-form">
+            <label>Ürün <select name="product_id">{% for product in products %}<option value="{{ product.id }}">{{ product.title }}</option>{% endfor %}</select></label>
+            <label>Creative type <select name="creative_type"><option value="product_focus">Product focus</option><option value="lifestyle">Lifestyle</option><option value="problem_solution">Problem solution</option><option value="gift_idea">Gift idea</option><option value="minimalist">Minimalist</option></select></label>
+            <label>Hedef adet <select name="desired_count">{% for count in range(1, 6) %}<option value="{{ count }}">{{ count }}</option>{% endfor %}</select></label>
+            <button type="submit">Generate Creatives</button>
+          </form>
+          <p id="creative-generation-result" class="notice" hidden></p>
+        {% else %}<p>Creative üretmek için önce Etsy listing'lerini eşitleyin veya bir ürün ekleyin.</p>{% endif %}
+        {% if creatives %}
+          <div class="creative-list">{% for creative in creatives %}
+            <article class="creative-card creative-{{ creative.source_type }}" data-creative-id="{{ creative.id }}"><p><strong>{{ creative.source_type | upper }}</strong> · {{ creative.creative_type }} · {{ creative.product.title }} · {{ creative.status }}</p>{% if creative.image_path %}<img class="creative-image" src="{{ creative.image_path }}" alt="{{ creative.title }}" loading="lazy">{% endif %}<h3>{{ creative.title }}</h3><p>{{ creative.description }}</p><p><small>{{ creative.keywords | join(', ') }}</small></p><p><em>{{ creative.call_to_action }}</em></p>
+              <form method="post" action="/creatives/{{ creative.id }}/approve"><button type="submit">Onayla</button></form><button class="secondary edit-creative" type="button">Düzenle</button><form method="post" action="/creatives/{{ creative.id }}/delete"><button class="secondary" type="submit">Sil</button></form>
+              <form class="creative-edit-form" hidden><label>Başlık <input name="title" value="{{ creative.title }}"></label><label>Açıklama <textarea name="description">{{ creative.description }}</textarea></label><label>Keywords <input name="keywords" value="{{ creative.keywords | join(', ') }}"></label><label>CTA <input name="call_to_action" value="{{ creative.call_to_action }}"></label><button type="submit">Kaydet</button></form>
+            </article>{% endfor %}
+          </div>
+        {% endif %}
+      </section>
+      <section class="etsy-connection" aria-label="Pinterest connection">
+        <h2>Pinterest</h2>
+        {% if pinterest_message %}<p class="notice success">{{ pinterest_message }}</p>{% endif %}
+        {% if pinterest_error %}<p class="notice error">{{ pinterest_error }}</p>{% endif %}
+        {% if pinterest_account %}
+          <p><strong>Bağlı:</strong> {{ pinterest_account.account_name }}</p>
+          <form method="post" action="/pinterest/boards/sync"><button type="submit">Pinterest board'larını eşitle</button></form>
+          <form method="post" action="/pinterest/disconnect"><button class="secondary" type="submit">Pinterest bağlantısını kaldır</button></form>
+          <p><a href="/pinterest/boards">Board API görünümü</a></p>
+          {% if pinterest_boards %}
+            <ul class="board-list">{% for board in pinterest_boards %}<li><code>{{ board.board_id }}</code> — {{ board.name }}</li>{% endfor %}</ul>
+          {% else %}<p>Henüz yerel board kaydı yok.</p>{% endif %}
+        {% else %}
+          <p>Henüz Pinterest Business hesabı bağlı değil.</p>
+          <a class="button" href="/pinterest/connect">Connect Pinterest</a>
+        {% endif %}
+      </section>
+      <section class="etsy-connection" aria-label="Etsy connection">
+        <h2>Etsy</h2>
+        {% if etsy_message %}<p class="notice success">{{ etsy_message }}</p>{% endif %}
+        {% if etsy_error %}<p class="notice error">{{ etsy_error }}</p>{% endif %}
+        {% if etsy_account %}
+          <p><strong>Bağlı:</strong> {{ etsy_account.shop_name }}</p>
+          <form method="post" action="/etsy/sync"><button type="submit">Sync Etsy Listings</button></form>
+          <form method="post" action="/etsy/disconnect"><button class="secondary" type="submit">Etsy bağlantısını kaldır</button></form>
+        {% else %}
+          <p>Henüz Etsy hesabı bağlı değil.</p>
+          <a class="button" href="/etsy/connect">Connect Etsy</a>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+  <script>
+    document.getElementById('creative-generate-form')?.addEventListener('submit', async (event) => { event.preventDefault(); const form = event.currentTarget; const result = document.getElementById('creative-generation-result'); const payload = Object.fromEntries(new FormData(form)); payload.product_id = Number(payload.product_id); payload.desired_count = Number(payload.desired_count); const response = await fetch('/creatives/generate', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)}); const data = await response.json(); result.hidden = false; result.textContent = data.message || data.detail || 'İşlem tamamlanamadı.'; if (response.ok && data.created) location.reload(); });
+    document.querySelectorAll('.edit-creative').forEach(button => button.addEventListener('click', () => { button.parentElement.querySelector('.creative-edit-form').hidden = false; }));
+    document.querySelectorAll('.creative-edit-form').forEach(form => form.addEventListener('submit', async (event) => { event.preventDefault(); const card = form.closest('[data-creative-id]'); const raw = Object.fromEntries(new FormData(form)); raw.keywords = raw.keywords.split(',').map(item => item.trim()).filter(Boolean); const response = await fetch(`/creatives/${card.dataset.creativeId}`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(raw)}); if (response.ok) location.reload(); }));
+  </script>
+</html>
