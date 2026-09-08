@@ -33,6 +33,18 @@ async def lifespan(_: FastAPI):
                 continue
             with engine.begin() as connection:
                 connection.execute(text(f"ALTER TABLE pin_creatives ADD COLUMN {name} {definition}"))
+    if "pins" in inspector.get_table_names():
+        pin_columns = {column["name"] for column in inspector.get_columns("pins")}
+        if "creative_id" not in pin_columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE pins ADD COLUMN creative_id INTEGER"))
+        # Legacy Pin rows with no creative link remain valid while new records
+        # cannot reuse a creative.
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_pins_creative_id_unique "
+                "ON pins (creative_id) WHERE creative_id IS NOT NULL"
+            ))
     yield
 
 

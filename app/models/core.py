@@ -51,6 +51,11 @@ class Pin(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"))
+    # A Pin may be prepared from one creative only.  The unique constraint is the
+    # durable guard that prevents a creative from being scheduled twice.
+    creative_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pin_creatives.id"), unique=True, nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     image_path: Mapped[str | None] = mapped_column(String(2048))
@@ -60,6 +65,7 @@ class Pin(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     product: Mapped[Product | None] = relationship(back_populates="pins")
+    creative: Mapped["PinCreative | None"] = relationship(back_populates="pins")
     analytics: Mapped[list["AnalyticsSnapshot"]] = relationship(back_populates="pin")
 
 
@@ -99,6 +105,7 @@ class PinCreative(Base):
     generation_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     product: Mapped[Product] = relationship(back_populates="creatives")
+    pins: Mapped[list[Pin]] = relationship(back_populates="creative")
 
 
 class PinterestAccount(Base):
