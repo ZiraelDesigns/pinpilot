@@ -1,0 +1,13 @@
+[Unit]
+Description=Run PinPilot daily Pin queue every day
+
+[Timer]
+# The production VPS currently uses UTC. The scheduler uses the same calendar
+# date, then creates its fixed 09:00/12:00/15:00/18:00/21:00 queue slots.
+OnCalendar=*-*-* 00:05:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=pinpilot-daily-queue.service
+
+[Install]
+WantedBy=timers.target

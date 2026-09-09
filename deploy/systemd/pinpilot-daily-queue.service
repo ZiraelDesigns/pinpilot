@@ -1,0 +1,16 @@
+[Unit]
+Description=Prepare PinPilot daily local Pin queue
+After=network-online.target pinpilot.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/pinpilot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/pinpilot/.venv/bin/python /opt/pinpilot/scripts/generate_daily_pins.py
+
+# Output is retained by systemd journal; a failed run does not affect the
+# independent pinpilot.service web process.
+StandardOutput=journal
+StandardError=journal
