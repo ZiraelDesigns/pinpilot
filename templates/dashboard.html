@@ -28,6 +28,15 @@
         <p>Günlük hedef 15 Pin: 09:00, 12:00, 15:00, 18:00 ve 21:00 saatlerinde üçer Pin planlanır.</p>
       </section>
       <section class="etsy-connection" aria-label="Generate Pin creatives">
+        <h2>AI Generation Jobs</h2>
+        <section class="cards" aria-label="AI generation job counts">
+          <article><span>Pending</span><strong id="ai-jobs-pending-count">{{ ai_job_counts.pending }}</strong></article>
+          <article><span>Processing</span><strong id="ai-jobs-processing-count">{{ ai_job_counts.processing }}</strong></article>
+          <article><span>Completed</span><strong id="ai-jobs-completed-count">{{ ai_job_counts.completed }}</strong></article>
+          <article><span>Failed</span><strong id="ai-jobs-failed-count">{{ ai_job_counts.failed }}</strong></article>
+        </section>
+      </section>
+      <section class="etsy-connection" aria-label="Generate Pin creatives">
         <h2>Generate Pin Ideas</h2>
         {% if products %}
           <form id="creative-generate-form">

@@ -55,6 +55,24 @@ async def lifespan(_: FastAPI):
                     "ALTER TABLE pin_generation_jobs "
                     "ADD COLUMN requested_count INTEGER NOT NULL DEFAULT 1"
                 ))
+        for name, definition in {
+            "retry_count": "INTEGER NOT NULL DEFAULT 0",
+            "next_attempt_at": "DATETIME",
+            "locked_at": "DATETIME",
+            "worker_id": "VARCHAR(64)",
+        }.items():
+            if name not in job_columns:
+                with engine.begin() as connection:
+                    connection.execute(text(f"ALTER TABLE pin_generation_jobs ADD COLUMN {name} {definition}"))
+    if "products" in inspector.get_table_names():
+        product_columns = {column["name"] for column in inspector.get_columns("products")}
+        for name, definition in {
+            "ai_generation_locked_at": "DATETIME",
+            "ai_generation_worker_id": "VARCHAR(64)",
+        }.items():
+            if name not in product_columns:
+                with engine.begin() as connection:
+                    connection.execute(text(f"ALTER TABLE products ADD COLUMN {name} {definition}"))
     yield
 
 
@@ -126,6 +144,12 @@ def dashboard(
             )
         ) or 0,
     }
+    ai_job_counts = {
+        status: db.scalar(select(func.count()).select_from(PinGenerationJob).where(
+            PinGenerationJob.status == status
+        )) or 0
+        for status in ("pending", "processing", "completed", "failed")
+    }
     etsy_account = db.query(EtsyAccount).filter_by(is_active=True).first()
     etsy_sync_run = (
         db.query(EtsySyncRun).filter_by(account_id=etsy_account.id).order_by(EtsySyncRun.started_at.desc()).first()
@@ -145,6 +169,7 @@ def dashboard(
         context={
             "counts": counts,
             "queue_counts": queue_counts,
+            "ai_job_counts": ai_job_counts,
             "etsy_account": etsy_account,
             "etsy_sync_run": etsy_sync_run,
             "etsy_message": etsy_message,

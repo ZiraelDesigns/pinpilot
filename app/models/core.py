@@ -43,6 +43,10 @@ class Product(Base):
     url: Mapped[str | None] = mapped_column(String(2048))
     image_url: Mapped[str | None] = mapped_column(String(2048))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # A short-lived database lease prevents two workers from creating the same
+    # AI variation for a product at the same time.
+    ai_generation_locked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    ai_generation_worker_id: Mapped[str | None] = mapped_column(String(64))
     pins: Mapped[list["Pin"]] = relationship(back_populates="product")
     creatives: Mapped[list["PinCreative"]] = relationship(back_populates="product", cascade="all, delete-orphan")
 
@@ -80,6 +84,10 @@ class PinGenerationJob(Base):
     requested_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    worker_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
