@@ -1,0 +1,11 @@
+[Unit]
+Description=Run PinPilot Etsy listing sync hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+AccuracySec=5min
+Unit=pinpilot-etsy-sync.service
+
+[Install]
+WantedBy=timers.target

@@ -19,3 +19,15 @@ def test_daily_queue_timer_runs_daily_and_recovers_after_reboot():
     assert "OnCalendar=*-*-* 00:05:00 UTC" in timer
     assert "Persistent=true" in timer
     assert "pinpilot-daily-queue.service" in timer
+
+
+def test_etsy_sync_units_run_hourly_as_an_independent_oneshot_job():
+    service = (SYSTEMD_DIR / "pinpilot-etsy-sync.service").read_text(encoding="utf-8")
+    timer = (SYSTEMD_DIR / "pinpilot-etsy-sync.timer").read_text(encoding="utf-8")
+
+    assert "Type=oneshot" in service
+    assert "scripts/sync_etsy_listings.py" in service
+    assert "StandardError=journal" in service
+    assert "OnCalendar=hourly" in timer
+    assert "Persistent=true" in timer
+    assert "pinpilot-etsy-sync.service" in timer

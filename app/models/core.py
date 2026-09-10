@@ -13,6 +13,7 @@ class PinStatus(str, Enum):
     GENERATED = "generated"
     SCHEDULED = "scheduled"
     PUBLISHED = "published"
+    CANCELLED = "cancelled"
 
 
 class PinCreativeType(str, Enum):
@@ -186,6 +187,9 @@ class EtsyAccount(Base):
     listings: Mapped[list["EtsyListing"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )
+    sync_runs: Mapped[list["EtsySyncRun"]] = relationship(
+        back_populates="account", cascade="all, delete-orphan"
+    )
 
 
 class EtsyOAuthCredential(Base):
@@ -236,6 +240,25 @@ class EtsyListing(Base):
     synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     account: Mapped[EtsyAccount] = relationship(back_populates="listings")
     product: Mapped[Product | None] = relationship()
+
+
+class EtsySyncRun(Base):
+    """A non-sensitive audit record for one read-only Etsy synchronization."""
+
+    __tablename__ = "etsy_sync_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("etsy_accounts.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    processed_listings: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    new_products: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    changed_products: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    new_mockup_creatives: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    inactive_listings: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    account: Mapped[EtsyAccount] = relationship(back_populates="sync_runs")
 
 
 class AnalyticsSnapshot(Base):

@@ -1,0 +1,14 @@
+[Unit]
+Description=Synchronize PinPilot Etsy listings (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/pinpilot
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/pinpilot
+ExecStart=/opt/pinpilot/.venv/bin/python /opt/pinpilot/scripts/sync_etsy_listings.py
+StandardOutput=journal
+StandardError=journal

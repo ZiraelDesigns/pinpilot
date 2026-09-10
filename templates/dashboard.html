@@ -70,6 +70,7 @@
         {% if etsy_error %}<p class="notice error">{{ etsy_error }}</p>{% endif %}
         {% if etsy_account %}
           <p><strong>Bağlı:</strong> {{ etsy_account.shop_name }}</p>
+          {% if etsy_sync_run %}<p><small><strong>Son Etsy sync:</strong> {{ etsy_sync_run.finished_at or etsy_sync_run.started_at }} · {{ etsy_sync_run.status }} · {{ etsy_sync_run.processed_listings }} listing · {{ etsy_sync_run.new_products }} yeni · {{ etsy_sync_run.changed_products }} değişen · {{ etsy_sync_run.new_mockup_creatives }} yeni mockup{% if etsy_sync_run.error_message %} · {{ etsy_sync_run.error_message }}{% endif %}</small></p>{% else %}<p><small>Henüz Etsy sync çalışmadı.</small></p>{% endif %}
           <form method="post" action="/etsy/sync"><button type="submit">Sync Etsy Listings</button></form>
           <form method="post" action="/etsy/disconnect"><button class="secondary" type="submit">Etsy bağlantısını kaldır</button></form>
         {% else %}

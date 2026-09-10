@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import PROJECT_ROOT, settings
 from app.database import Base, engine, get_db
-from app.models import EtsyAccount, Pin, PinCreative, PinGenerationJob, PinterestAccount, PinterestBoard, Product
+from app.models import EtsyAccount, EtsySyncRun, Pin, PinCreative, PinGenerationJob, PinterestAccount, PinterestBoard, Product
 from app.models.core import PinCreativeSourceType, PinStatus
 from app.routers.etsy import router as etsy_router
 from app.routers.pinterest import router as pinterest_router
@@ -127,6 +127,10 @@ def dashboard(
         ) or 0,
     }
     etsy_account = db.query(EtsyAccount).filter_by(is_active=True).first()
+    etsy_sync_run = (
+        db.query(EtsySyncRun).filter_by(account_id=etsy_account.id).order_by(EtsySyncRun.started_at.desc()).first()
+        if etsy_account else None
+    )
     pinterest_account = db.query(PinterestAccount).filter_by(is_active=True).first()
     pinterest_boards = (
         db.query(PinterestBoard).filter_by(account_id=pinterest_account.id).order_by(PinterestBoard.name).all()
@@ -142,6 +146,7 @@ def dashboard(
             "counts": counts,
             "queue_counts": queue_counts,
             "etsy_account": etsy_account,
+            "etsy_sync_run": etsy_sync_run,
             "etsy_message": etsy_message,
             "etsy_error": etsy_error,
             "pinterest_account": pinterest_account,
