@@ -22,6 +22,25 @@ class StaticProvider:
         return self.response
 
 
+def _seo_response(**overrides):
+    response = {
+        "title": "Handmade Candle for Quiet Evenings",
+        "description": "A handmade candle for thoughtful shoppers and quiet evening rituals.",
+        "call_to_action": "See details",
+        "seo": {
+            "primary_keyword": "handmade candle",
+            "secondary_keywords": ["soy candle"],
+            "long_tail_keywords": ["handmade candle for quiet evenings"],
+            "audience_keywords": ["thoughtful shoppers"],
+            "use_case_keywords": ["evening ritual"],
+            "search_intents": ["product_search", "use_case_intent"],
+            "creative_angle": "quiet evening ritual",
+        },
+    }
+    response.update(overrides)
+    return response
+
+
 def _product(db, title="Handmade Candle", description="A warm soy candle for quiet evenings"):
     product = Product(title=title, description=description, url="https://example.test/candle")
     db.add(product)
@@ -85,8 +104,10 @@ def test_invalid_ai_json_is_rejected():
 
 
 def test_json_parsing_deduplicates_keywords():
-    parsed = AIContentService._parse_generated_json(json.dumps({"title": "A title", "description": "Helpful text", "keywords": ["gift", "gift", "idea"], "call_to_action": "View item"}))
-    assert parsed.keywords == ["gift", "idea"]
+    payload = _seo_response()
+    payload["seo"]["secondary_keywords"] = ["soy candle", "soy candle"]
+    parsed = AIContentService._parse_generated_json(json.dumps(payload))
+    assert parsed.keywords.count("soy candle") == 1
 
 
 def test_duplicate_request_avoids_additional_provider_calls():
@@ -94,10 +115,10 @@ def test_duplicate_request_avoids_additional_provider_calls():
         db = SessionLocal()
         try:
             product = _product(db)
-            provider = StaticProvider(json.dumps({"title": "Unique title", "description": "Helpful description", "keywords": ["candle"], "call_to_action": "See more"}))
+            provider = StaticProvider(json.dumps(_seo_response()))
             service = AIContentService(db, provider)
-            assert len(service.generate(product, PinCreativeType.GIFT_IDEA, 1)) == 1
-            assert service.generate(product, PinCreativeType.GIFT_IDEA, 1) == []
+            assert len(service.generate(product, PinCreativeType.PRODUCT_FOCUS, 1)) == 1
+            assert service.generate(product, PinCreativeType.PRODUCT_FOCUS, 1) == []
             assert provider.calls == 1
         finally:
             db.delete(product)
@@ -204,7 +225,7 @@ def test_image_prompts_use_distinct_scene_instructions_per_creative_type():
     # Compare prompt text directly; this performs no provider or image call.
     from app.services.ai_content import GeneratedCreative, ProductContext
     product_context = ProductContext("Cup", "Ceramic cup", [], None, None, ["https://images.example.test/cup.jpg"])
-    generated = GeneratedCreative("Cup title", "Cup description", ["cup"], "Shop")
+    generated = GeneratedCreative("Cup title", "Cup description", ["cup"], "Shop", _seo_response()["seo"])
     prompts = {
         creative_type: AIContentService._image_prompt(product_context, creative_type.value, 1, generated)
         for creative_type in PinCreativeType
@@ -233,3 +254,144 @@ def test_creative_api_can_approve_update_and_delete():
             db.delete(product)
             db.commit()
             db.close()
+
+
+def test_seo_v2_metadata_is_saved_and_keywords_are_flattened(monkeypatch):
+    monkeypatch.setattr(settings, "ai_image_provider", "mock")
+    with TestClient(app):
+        db = SessionLocal()
+        try:
+            product = _product(db)
+            created = AIContentService(db, StaticProvider(json.dumps(_seo_response()))).generate(
+                product, PinCreativeType.PRODUCT_FOCUS, 1
+            )
+            creative = created[0]
+            assert creative.seo_metadata["primary_keyword"] == "handmade candle"
+            assert creative.keywords == [
+                "handmade candle", "soy candle", "handmade candle for quiet evenings",
+                "thoughtful shoppers", "evening ritual",
+            ]
+        finally:
+            db.delete(product)
+            db.commit()
+            db.close()
+
+
+def test_seo_v2_rejects_invalid_primary_intent_stuffing_and_unsupported_claims():
+    from app.services.ai_content import ProductContext
+
+    context = ProductContext("Handmade Candle", "A warm soy candle", ["candle"], None, None, [])
+    unrelated = _seo_response()
+    unrelated["title"] = "Luxury Yacht Gift"
+    unrelated["seo"]["primary_keyword"] = "luxury yacht"
+    with pytest.raises(AIContentError, match="ilgili değil"):
+        AIContentService._parse_generated_json(json.dumps(unrelated), context)
+
+    invalid_intent = _seo_response()
+    invalid_intent["seo"]["search_intents"] = ["viral_intent"]
+    with pytest.raises(AIContentError, match="search_intents"):
+        AIContentService._parse_generated_json(json.dumps(invalid_intent), context)
+
+    stuffing = _seo_response()
+    stuffing["seo"]["secondary_keywords"] = ["candle"] * 4
+    with pytest.raises(AIContentError, match="aşırı tekrar"):
+        AIContentService._parse_generated_json(json.dumps(stuffing), context)
+
+    unsupported = _seo_response()
+    unsupported["title"] = "Personalized Handmade Candle"
+    unsupported["seo"]["primary_keyword"] = "personalized handmade candle"
+    with pytest.raises(AIContentError, match="desteklenmeyen"):
+        AIContentService._parse_generated_json(json.dumps(unsupported), context)
+
+
+def test_seo_v2_prompt_includes_type_strategy_and_previous_context():
+    from app.services.ai_content import ProductContext
+
+    context = ProductContext("Handmade Candle", "Soy candle", ["candle"], None, None, [])
+    previous = [{
+        "title": "Handmade Candle for Reading",
+        "primary_keyword": "handmade candle reading gift",
+        "creative_angle": "reading nook gift",
+    }]
+    prompt = AIContentService._prompt(context, "gift_idea", 2, previous)
+
+    payload = json.loads(prompt.rsplit("INPUT_JSON=", 1)[1])
+    assert payload["previous_ai_creatives"] == previous
+    assert "gifting occasion" in prompt
+    assert "primary_keyword" in prompt
+
+    strategies = {
+        creative_type: AIContentService._prompt(context, creative_type.value, 1)
+        for creative_type in PinCreativeType
+    }
+    assert len(set(strategies.values())) == len(PinCreativeType)
+
+
+def test_seo_v2_rejects_duplicate_primary_keyword_from_previous_creative(monkeypatch):
+    monkeypatch.setattr(settings, "ai_image_provider", "mock")
+    with TestClient(app):
+        db = SessionLocal()
+        try:
+            product = _product(db)
+            previous = PinCreative(
+                product=product,
+                creative_type=PinCreativeType.LIFESTYLE.value,
+                title="Handmade Candle for Quiet Evenings",
+                description="Description",
+                keywords=["handmade candle"],
+                seo_metadata=_seo_response()["seo"],
+                call_to_action="See details",
+                source_type="ai",
+                status="draft",
+                generation_key="seo-v2-previous",
+            )
+            db.add(previous)
+            db.commit()
+            with pytest.raises(AIContentError, match="primary keyword"):
+                AIContentService(db, StaticProvider(json.dumps(_seo_response()))).generate(
+                    product, PinCreativeType.PRODUCT_FOCUS, 1
+                )
+        finally:
+            db.delete(product)
+            db.commit()
+            db.close()
+
+
+def test_seo_v2_rejects_unsupported_product_feature_claims():
+    from app.services.ai_content import ProductContext
+
+    context = ProductContext("Floral Phone Case", "A floral phone case", ["phone case"], None, None, [])
+    response = _seo_response()
+    response["title"] = "Durable Floral Phone Case"
+    response["description"] = "A durable protective floral phone case for everyday use."
+    response["seo"]["primary_keyword"] = "durable floral phone case"
+    response["seo"]["long_tail_keywords"] = ["durable floral phone case for everyday use"]
+    with pytest.raises(AIContentError, match="desteklenmeyen"):
+        AIContentService._parse_generated_json(json.dumps(response), context, "product_focus")
+
+
+def test_seo_v2_rejects_vague_phone_case_long_tail_keyword():
+    from app.services.ai_content import ProductContext
+
+    context = ProductContext("Pressed Flower Phone Case", "A soft floral phone case", ["phone case"], None, None, [])
+    response = _seo_response()
+    response["title"] = "Pressed Flower Phone Case"
+    response["description"] = "A soft floral phone case."
+    response["seo"]["primary_keyword"] = "pressed flower phone case"
+    response["seo"]["secondary_keywords"] = ["floral phone case"]
+    response["seo"]["long_tail_keywords"] = ["delicate floral phone accessory"]
+    with pytest.raises(AIContentError, match="ürün türünü"):
+        AIContentService._parse_generated_json(json.dumps(response), context, "product_focus")
+
+
+def test_product_focus_rejects_multiple_competing_angles():
+    from app.services.ai_content import ProductContext
+
+    context = ProductContext("Handmade Candle", "A warm soy candle", ["candle"], None, None, [])
+    response = _seo_response()
+    response["seo"]["search_intents"] = [
+        "product_search", "gift_intent", "aesthetic_style_intent",
+    ]
+    response["seo"]["creative_angle"] = "product details, gifting, and lifestyle style"
+    with pytest.raises(AIContentError, match="tek baskın"):
+        AIContentService._parse_generated_json(json.dumps(response), context, "product_focus")

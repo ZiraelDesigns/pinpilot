@@ -94,6 +94,9 @@ class PinCreative(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     keywords: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    # Structured Pinterest SEO v2 signals. ``keywords`` remains the flattened,
+    # backward-compatible search list used by the dashboard and scheduler.
+    seo_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     call_to_action: Mapped[str] = mapped_column(String(255), nullable=False)
     image_path: Mapped[str | None] = mapped_column(String(2048))
     # `image_path` can be a locally served /media URL or the canonical public Etsy image URL.

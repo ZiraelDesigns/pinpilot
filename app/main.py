@@ -26,6 +26,7 @@ async def lifespan(_: FastAPI):
         missing_columns = {
             "image_path": "VARCHAR(2048)",
             "source_image_url": "VARCHAR(2048)",
+            "seo_metadata": "JSON",
             # Existing image-generation records predate source types and are AI records.
             "source_type": "VARCHAR(16) NOT NULL DEFAULT 'ai'",
         }

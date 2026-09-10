@@ -44,26 +44,43 @@ class MockAIContentProvider:
         creative_type = payload["creative_type"]
         variation = payload["variation"]
 
-        labels = {
-            "product_focus": "Ürünün öne çıkan detayları",
-            "lifestyle": "Günlük hayata uyum sağlayan fikir",
-            "problem_solution": "Pratik bir çözüm fikri",
-            "gift_idea": "Düşünceli hediye fikri",
-            "minimalist": "Sade ve zamansız seçim",
+        angles = {
+            "product_focus": "product details",
+            "lifestyle": "everyday style",
+            "problem_solution": "practical use",
+            "gift_idea": "thoughtful gifting",
+            "minimalist": "minimalist style",
         }
-
-        keywords = product["tags"] or _keywords_from_title(product["title"])
+        intents = {
+            "product_focus": ["product_search"],
+            "lifestyle": ["aesthetic_style_intent"],
+            "problem_solution": ["use_case_intent"],
+            "gift_idea": ["gift_intent"],
+            "minimalist": ["aesthetic_style_intent"],
+        }
+        candidates = product["tags"] or _keywords_from_title(product["title"])
+        base_keyword = next((value for value in candidates if value.casefold() != "product"), candidates[0])
+        angle = angles[creative_type]
+        primary_keyword = f"{base_keyword} {angle} {variation}"
+        product_type = payload.get("product_type_hint") or base_keyword
 
         return json.dumps(
             {
-                "title": f"{product['title']} — {labels[creative_type]} {variation}",
+                "title": primary_keyword.title(),
                 "description": (
-                    f"{product['title']} için "
-                    f"{labels[creative_type].lower()}. "
+                    f"Discover {product['title']} for {angle}. "
                     f"{product['description'][:220]}"
                 ).strip(),
-                "keywords": keywords[:6],
-                "call_to_action": "Detayları inceleyin",
+                "call_to_action": "See details",
+                "seo": {
+                    "primary_keyword": primary_keyword,
+                    "secondary_keywords": [base_keyword],
+                    "long_tail_keywords": [f"{base_keyword} {product_type} {angle}"],
+                    "audience_keywords": ["thoughtful shoppers"],
+                    "use_case_keywords": [angle],
+                    "search_intents": intents[creative_type],
+                    "creative_angle": f"{angle} angle {variation}",
+                },
             },
             ensure_ascii=False,
         )
@@ -146,6 +163,7 @@ class GeneratedCreative:
     description: str
     keywords: list[str]
     call_to_action: str
+    seo_metadata: dict[str, object]
 
 
 class AIContentService:
@@ -246,6 +264,7 @@ class AIContentService:
             return []
 
         created: list[PinCreative] = []
+        previous_seo = self._previous_ai_seo_context(product.id)
 
         image_provider = None
 
@@ -286,9 +305,13 @@ class AIContentService:
                         context,
                         creative_type.value,
                         variation,
+                        previous_seo,
                     )
-                )
+                ),
+                context,
+                creative_type.value,
             )
+            self._ensure_seo_is_novel(generated.seo_metadata, previous_seo)
 
             # ---------------------------------------------------------
             # 2. Create PinCreative database object
@@ -300,6 +323,7 @@ class AIContentService:
                 title=generated.title,
                 description=generated.description,
                 keywords=generated.keywords,
+                seo_metadata=generated.seo_metadata,
                 call_to_action=generated.call_to_action,
 
                 # IMPORTANT:
@@ -350,6 +374,7 @@ class AIContentService:
                     ) from exc
 
             created.append(creative)
+            previous_seo.append(self._seo_context_item(generated.title, generated.seo_metadata))
 
         self.db.commit()
 
@@ -437,8 +462,17 @@ class AIContentService:
         context: ProductContext,
         creative_type: str,
         variation: int,
+        previous_creatives: list[dict[str, str]] | None = None,
     ) -> str:
-        """Build a Gemini prompt for one Pinterest SEO creative."""
+        """Build a grounded, structured Pinterest SEO v2 Gemini prompt."""
+
+        strategies = {
+            "product_focus": "Focus on product-search and buying-research intent using supported details only.",
+            "lifestyle": "Focus on aesthetic/style intent and a believable supported use environment.",
+            "problem_solution": "Focus on one practical need only when the supplied product data supports it.",
+            "gift_idea": "Focus on a plausible recipient and gifting occasion without inventing personalization.",
+            "minimalist": "Focus on understated style and simple use without inventing materials or design details.",
+        }
 
         data = {
             "product": {
@@ -447,39 +481,40 @@ class AIContentService:
                 "tags": context.tags,
                 "price": context.price,
                 "url": context.url,
-                "images": context.images,
+                # URLs are references only; do not infer visual facts from them.
+                "image_urls": context.images,
             },
             "creative_type": creative_type,
+            "product_type_hint": _product_type_hint(context),
             "variation": variation,
+            "previous_ai_creatives": (previous_creatives or [])[-8:],
         }
 
         return (
-            "Create one high-quality Pinterest SEO creative for this Etsy product. "
-            "Return JSON only with exactly these fields: "
-            "title, description, keywords, call_to_action. "
-
-            "The Pinterest title should be natural, attractive and optimized "
-            "for Pinterest search without keyword stuffing. "
-
-            "The description should clearly explain why someone would be "
-            "interested in the product and naturally include relevant search terms. "
-
-            "Use natural readable English because the target Pinterest audience "
-            "is primarily English-speaking. "
-
-            "Do not use spam, excessive hashtags, fake claims, fake discounts, "
-            "fake reviews or unsupported product features. "
-
-            "Use relevant keywords only. "
-
-            "Return 5 to 12 concise Pinterest search keywords. "
-
-            "Make this variation meaningfully different from other variations "
-            "of the same product. "
-
-            "The call_to_action should be short and natural, such as "
-            "\"Shop the product\", \"See details\" or \"Explore the mug\". "
-
+            "Create one Pinterest SEO v2 creative for the supplied Etsy product. "
+            "Return JSON only, with exactly title, description, call_to_action, and seo. "
+            "The seo object must contain exactly primary_keyword, secondary_keywords, "
+            "long_tail_keywords, audience_keywords, use_case_keywords, search_intents, "
+            "and creative_angle. Keyword groups are JSON arrays of concise strings. "
+            "search_intents may contain only product_search, gift_intent, "
+            "aesthetic_style_intent, audience_intent, or use_case_intent. "
+            "Use natural American English. Put the primary keyword naturally near the "
+            "start of the title; avoid keyword stuffing, hashtags, clickbait, ranking "
+            "or viral promises. Write an original, useful description connecting product, "
+            "audience, and a supported use or gift situation. FACTUAL BOUNDARY: only use "
+            "a product feature, material, compatibility, personalization, durability, "
+            "protection, quality, longevity, or gift-suitability claim when it is explicitly "
+            "supported by the supplied title, description, or tags. Never invent features, "
+            "materials, personalization, discounts, reviews, compatibility, or claims. "
+            "Make each long-tail keyword read like a natural American-English search query; "
+            "when product_type_hint is available, every long-tail keyword must include that "
+            "product type rather than a vague accessory term. Use one dominant marketing or "
+            "search angle only: do not combine product, gifting, and lifestyle angles. "
+            "Use five to twelve unique keyword phrases across all SEO groups. "
+            "Previous AI creatives are avoidance context: never reuse their title pattern, "
+            "primary_keyword, or creative_angle. Creative-type strategy: "
+            + strategies.get(creative_type, strategies["product_focus"])
+            + " "
             "INPUT_JSON="
             + json.dumps(data, ensure_ascii=False)
         )
@@ -573,8 +608,43 @@ class AIContentService:
             f"Pinterest description context: {generated.description[:500]} "
         )
 
+    def _previous_ai_seo_context(self, product_id: int) -> list[dict[str, str]]:
+        """Return a bounded, non-sensitive diversity context for Gemini."""
+        rows = self.db.query(PinCreative).filter_by(
+            product_id=product_id,
+            source_type=PinCreativeSourceType.AI.value,
+        ).order_by(PinCreative.created_at.desc()).limit(8).all()
+        return [
+            self._seo_context_item(creative.title, creative.seo_metadata)
+            for creative in reversed(rows)
+            if creative.seo_metadata
+        ]
+
     @staticmethod
-    def _parse_generated_json(raw: str) -> GeneratedCreative:
+    def _seo_context_item(title: str, seo: dict[str, object]) -> dict[str, str]:
+        return {
+            "title": title,
+            "primary_keyword": str(seo.get("primary_keyword", "")).strip(),
+            "creative_angle": str(seo.get("creative_angle", "")).strip(),
+        }
+
+    @staticmethod
+    def _ensure_seo_is_novel(
+        seo: dict[str, object], previous_creatives: list[dict[str, str]]
+    ) -> None:
+        primary = str(seo["primary_keyword"]).casefold()
+        angle = str(seo["creative_angle"]).casefold()
+        previous_primary = {item["primary_keyword"].casefold() for item in previous_creatives}
+        previous_angles = {item["creative_angle"].casefold() for item in previous_creatives}
+        if primary in previous_primary:
+            raise AIContentError("AI yanıtı bu ürün için zaten kullanılan primary keyword'ü tekrarlıyor.")
+        if angle in previous_angles:
+            raise AIContentError("AI yanıtı bu ürün için zaten kullanılan creative angle'ı tekrarlıyor.")
+
+    @staticmethod
+    def _parse_generated_json(
+        raw: str, context: ProductContext | None = None, creative_type: str | None = None
+    ) -> GeneratedCreative:
         try:
             data = json.loads(raw)
 
@@ -588,11 +658,7 @@ class AIContentService:
                 "AI yanıtı beklenen JSON nesnesi formatında değil."
             )
 
-        for key in (
-            "title",
-            "description",
-            "call_to_action",
-        ):
+        for key in ("title", "description", "call_to_action"):
             value = data.get(key)
 
             if not isinstance(value, str) or not value.strip():
@@ -600,33 +666,145 @@ class AIContentService:
                     f"AI yanıtında '{key}' alanı eksik veya geçersiz."
                 )
 
-        keywords_data = data.get("keywords")
+        seo = data.get("seo")
+        if not isinstance(seo, dict):
+            raise AIContentError("AI yanıtında 'seo' alanı eksik veya geçersiz.")
 
-        if (
-            not isinstance(keywords_data, list)
-            or not keywords_data
-            or not all(
-                isinstance(item, str) and item.strip()
-                for item in keywords_data
-            )
+        primary = seo.get("primary_keyword")
+        angle = seo.get("creative_angle")
+        if not isinstance(primary, str) or not primary.strip():
+            raise AIContentError("AI yanıtında primary_keyword eksik veya geçersiz.")
+        if not isinstance(angle, str) or not angle.strip():
+            raise AIContentError("AI yanıtında creative_angle eksik veya geçersiz.")
+
+        groups = (
+            "secondary_keywords",
+            "long_tail_keywords",
+            "audience_keywords",
+            "use_case_keywords",
+        )
+        normalized_groups: dict[str, list[str]] = {}
+        source_keywords: list[str] = [primary.strip()]
+        for group in groups:
+            values = seo.get(group)
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) and value.strip() for value in values
+            ):
+                raise AIContentError(f"AI yanıtındaki {group} alanı geçersiz.")
+            source_keywords.extend(value.strip() for value in values)
+            normalized_groups[group] = list(dict.fromkeys(value.strip() for value in values))
+
+        intents = seo.get("search_intents")
+        allowed_intents = {
+            "product_search", "gift_intent", "aesthetic_style_intent",
+            "audience_intent", "use_case_intent",
+        }
+        if not isinstance(intents, list) or not intents or not all(
+            isinstance(intent, str) and intent in allowed_intents for intent in intents
         ):
-            raise AIContentError(
-                "AI yanıtındaki keywords alanı geçersiz."
-            )
+            raise AIContentError("AI yanıtındaki search_intents alanı geçersiz.")
 
-        keywords = list(
-            dict.fromkeys(
-                item.strip()
-                for item in keywords_data
-            )
-        )[:12]
+        keywords = list(dict.fromkeys(keyword.strip() for keyword in source_keywords))
+        if len(source_keywords) > 20 or len(keywords) < 5 or len(keywords) > 12:
+            raise AIContentError("AI yanıtındaki keyword seti spam veya beklenen aralık dışında.")
+        if any(source_keywords.count(keyword) > 2 for keyword in set(source_keywords)):
+            raise AIContentError("AI yanıtındaki keyword setinde aşırı tekrar var.")
+
+        seo_metadata: dict[str, object] = {
+            "primary_keyword": primary.strip(),
+            **normalized_groups,
+            "search_intents": list(dict.fromkeys(intents)),
+            "creative_angle": angle.strip(),
+        }
+        AIContentService._validate_seo_grounding(data, seo_metadata, context, creative_type)
 
         return GeneratedCreative(
             title=data["title"].strip()[:255],
             description=data["description"].strip(),
             keywords=keywords,
             call_to_action=data["call_to_action"].strip()[:255],
+            seo_metadata=seo_metadata,
         )
+
+    @staticmethod
+    def _validate_seo_grounding(
+        data: dict[str, object], seo: dict[str, object], context: ProductContext | None,
+        creative_type: str | None = None,
+    ) -> None:
+        """Reject obvious irrelevant and unsupported SEO claims deterministically."""
+        title = str(data["title"])
+        description = str(data["description"])
+        if "#" in title or "#" in description:
+            raise AIContentError("AI yanıtında hashtag kullanılamaz.")
+        if str(seo["primary_keyword"]).casefold() not in title.casefold():
+            raise AIContentError("Primary keyword Pinterest başlığında doğal biçimde yer almalı.")
+        title_tokens = re.findall(r"[a-z0-9]+", title.casefold())
+        if len(title_tokens) > 18 or any(title_tokens.count(token) > 2 for token in set(title_tokens)):
+            raise AIContentError("Pinterest başlığı gereksiz genişletilmiş veya keyword stuffing içeriyor.")
+        AIContentService._validate_creative_type_angle(seo, creative_type)
+        if context is None:
+            return
+
+        evidence = " ".join([context.title, context.description, *context.tags]).casefold()
+        evidence_tokens = set(re.findall(r"[a-z0-9]{3,}", evidence))
+        primary_tokens = set(re.findall(r"[a-z0-9]{3,}", str(seo["primary_keyword"]).casefold()))
+        generic = {"product", "details", "everyday", "thoughtful", "use"}
+        if not (primary_tokens - generic) & evidence_tokens:
+            raise AIContentError("AI yanıtındaki primary keyword ürün verisiyle ilgili değil.")
+
+        output = " ".join([
+            title, description, str(seo["primary_keyword"]),
+            *[str(item) for group in ("secondary_keywords", "long_tail_keywords", "audience_keywords", "use_case_keywords") for item in seo[group]],
+            str(seo["creative_angle"]),
+        ]).casefold()
+        restricted_claims = {
+            "personalized": ("personalized", "personalised", "custom"),
+            "handmade": ("handmade",),
+            "engraved": ("engraved",),
+            "sterling": ("sterling",), "gold": ("gold",), "silver": ("silver",),
+            "wooden": ("wooden",), "leather": ("leather",), "organic": ("organic",),
+            "vegan": ("vegan",), "waterproof": ("waterproof", "water-resistant"),
+            "hypoallergenic": ("hypoallergenic",), "durable": ("durable",),
+            "protective": ("protective", "protection"), "premium": ("premium",),
+            "high-quality": ("high-quality", "high quality"),
+            "long-lasting": ("long-lasting", "long lasting"),
+            "multiple phone models": ("multiple phone models",),
+            "gift": ("gift", "gifting", "giftable", "present"),
+            "discount": ("discount", "sale"), "free shipping": ("free shipping",),
+        }
+        for claim, evidence_forms in restricted_claims.items():
+            if claim in output and not any(form in evidence for form in evidence_forms):
+                raise AIContentError("AI yanıtı ürün verisiyle desteklenmeyen bir özellik iddiası içeriyor.")
+
+        product_type = _product_type_hint(context)
+        if product_type and any(
+            product_type not in keyword.casefold() for keyword in seo["long_tail_keywords"]
+        ):
+            raise AIContentError("Long-tail keyword ürün türünü açıkça içermeli.")
+
+    @staticmethod
+    def _validate_creative_type_angle(seo: dict[str, object], creative_type: str | None) -> None:
+        """Keep one explicit, type-appropriate search angle per AI creative."""
+        if not creative_type:
+            return
+        intents = set(seo["search_intents"])
+        expected = {
+            "product_focus": "product_search",
+            "lifestyle": "aesthetic_style_intent",
+            "problem_solution": "use_case_intent",
+            "gift_idea": "gift_intent",
+            "minimalist": "aesthetic_style_intent",
+        }
+        required = expected.get(creative_type)
+        if required and required not in intents:
+            raise AIContentError("Creative type ile SEO arama niyeti uyumlu değil.")
+        if creative_type == "product_focus" and {
+            "gift_intent", "aesthetic_style_intent"
+        } & intents:
+            raise AIContentError("product_focus creative tek baskın ürün açısı kullanmalı.")
+        angle_words = re.findall(r"[a-z0-9]+", str(seo["creative_angle"]).casefold())
+        if len(angle_words) > 10 or "," in str(seo["creative_angle"]):
+            raise AIContentError("Creative angle tek baskın bir açı olmalı.")
 
 
 def _keywords_from_title(title: str) -> list[str]:
@@ -636,3 +814,13 @@ def _keywords_from_title(title: str) -> list[str]:
             for word in re.findall(r"[\w-]{3,}", title)
         )
     )[:6]
+
+
+def _product_type_hint(context: ProductContext) -> str | None:
+    """Return a conservative product-type phrase when the listing states one."""
+    evidence = " ".join([context.title, context.description, *context.tags]).casefold()
+    known_types = (
+        "phone case", "t-shirt", "tee shirt", "sweatshirt", "hoodie", "tote bag",
+        "mug", "candle", "necklace", "poster", "art print", "sticker", "notebook",
+    )
+    return next((product_type for product_type in known_types if product_type in evidence), None)
