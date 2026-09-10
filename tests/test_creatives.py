@@ -395,3 +395,20 @@ def test_product_focus_rejects_multiple_competing_angles():
     response["seo"]["creative_angle"] = "product details, gifting, and lifestyle style"
     with pytest.raises(AIContentError, match="tek baskın"):
         AIContentService._parse_generated_json(json.dumps(response), context, "product_focus")
+
+
+def test_product_focus_allows_product_search_with_supported_style_intent():
+    from app.services.ai_content import ProductContext
+
+    context = ProductContext("Wavy Line Phone Case", "Abstract wavy line phone case", ["phone case", "minimalist"], None, None, [])
+    response = _seo_response()
+    response["title"] = "Wavy Line Phone Case"
+    response["description"] = "An abstract wavy line phone case with a minimalist style."
+    response["seo"]["primary_keyword"] = "wavy line phone case"
+    response["seo"]["secondary_keywords"] = ["abstract phone case"]
+    response["seo"]["long_tail_keywords"] = ["wavy line phone case for minimalist style"]
+    response["seo"]["search_intents"] = ["product_search", "aesthetic_style_intent"]
+    response["seo"]["creative_angle"] = "abstract phone case style"
+
+    parsed = AIContentService._parse_generated_json(json.dumps(response), context, "product_focus")
+    assert parsed.seo_metadata["search_intents"] == ["product_search", "aesthetic_style_intent"]

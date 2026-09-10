@@ -7,8 +7,8 @@ import pytest
 from app.config import settings
 from app.database import SessionLocal
 from app.models import EtsyAccount, EtsyListing, PinCreative, PinGenerationJob, Product
-from app.services.ai_content import AIContentError, AIContentService, MockAIContentProvider
-from app.services.ai_worker import AIGenerationWorker, redact_error
+from app.services.ai_content import AIContentError, AIContentService, AIValidationError, MockAIContentProvider
+from app.services.ai_worker import AIGenerationWorker, is_retryable_error, redact_error
 
 
 class RaisingContentService:
@@ -116,6 +116,30 @@ def test_retryable_5xx_error_is_requeued_without_a_provider_retry_call():
         assert result.retry_scheduled
         assert job.status == "pending"
         assert job.next_attempt_at == now + timedelta(seconds=2)
+    finally:
+        db.close()
+
+
+def test_validation_rejection_retries_with_backoff_then_stops_at_retry_limit():
+    db = SessionLocal()
+    try:
+        _, job = _product_with_job(db)
+        now = datetime(2035, 1, 1, 12, 0, 0)
+        worker = _worker(
+            lambda session: RaisingContentService(AIValidationError("product_focus creative tek baskın ürün açısı kullanmalı.")),
+            max_retries=2, now=lambda: now,
+        )
+        assert is_retryable_error(AIValidationError("invalid structured output"))
+        first = worker.process_once()
+        db.refresh(job)
+        assert first.retry_scheduled and job.status == "pending"
+        assert job.retry_count == 1 and job.next_attempt_at == now + timedelta(seconds=2)
+        job.next_attempt_at = None
+        db.commit()
+        second = worker.process_once()
+        db.refresh(job)
+        assert second.failed and job.status == "failed" and job.retry_count == 2
+        assert job.next_attempt_at is None
     finally:
         db.close()
 

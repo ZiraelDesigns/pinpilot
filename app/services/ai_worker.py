@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.models import PinGenerationJob, Product
 from app.models.core import PinCreativeType
-from app.services.ai_content import AIContentError, AIContentService
+from app.services.ai_content import AIContentError, AIContentService, AIValidationError
 from app.services.ai_image import AIImageError
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,10 @@ def redact_error(error: Exception | str) -> str:
 
 def is_retryable_error(error: Exception) -> bool:
     """Classify provider/upstream failures without exposing provider internals."""
+    # The provider returned structured output but it did not meet the contract.
+    # A fresh generation can comply; max_retries still bounds repeated output.
+    if isinstance(error, AIValidationError):
+        return True
     message = str(error).casefold()
     if any(value in message for value in ("429", "rate limit", "resource_exhausted", "timeout", "temporar", "connection")):
         return True

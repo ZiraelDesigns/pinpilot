@@ -19,6 +19,14 @@ class AIContentError(Exception):
     """A safe error to show when structured content cannot be generated."""
 
 
+class AIValidationError(AIContentError):
+    """The provider replied, but its structured SEO output was not acceptable.
+
+    A later generation may comply with the same prompt, so workers treat this
+    separately from permanent configuration or product-data failures.
+    """
+
+
 @dataclass(frozen=True)
 class ProductContext:
     title: str
@@ -637,9 +645,9 @@ class AIContentService:
         previous_primary = {item["primary_keyword"].casefold() for item in previous_creatives}
         previous_angles = {item["creative_angle"].casefold() for item in previous_creatives}
         if primary in previous_primary:
-            raise AIContentError("AI yanıtı bu ürün için zaten kullanılan primary keyword'ü tekrarlıyor.")
+            raise AIValidationError("AI yanıtı bu ürün için zaten kullanılan primary keyword'ü tekrarlıyor.")
         if angle in previous_angles:
-            raise AIContentError("AI yanıtı bu ürün için zaten kullanılan creative angle'ı tekrarlıyor.")
+            raise AIValidationError("AI yanıtı bu ürün için zaten kullanılan creative angle'ı tekrarlıyor.")
 
     @staticmethod
     def _parse_generated_json(
@@ -649,12 +657,12 @@ class AIContentService:
             data = json.loads(raw)
 
         except (TypeError, json.JSONDecodeError) as exc:
-            raise AIContentError(
+            raise AIValidationError(
                 "AI sağlayıcısı geçerli JSON döndürmedi."
             ) from exc
 
         if not isinstance(data, dict):
-            raise AIContentError(
+            raise AIValidationError(
                 "AI yanıtı beklenen JSON nesnesi formatında değil."
             )
 
@@ -662,20 +670,20 @@ class AIContentService:
             value = data.get(key)
 
             if not isinstance(value, str) or not value.strip():
-                raise AIContentError(
+                raise AIValidationError(
                     f"AI yanıtında '{key}' alanı eksik veya geçersiz."
                 )
 
         seo = data.get("seo")
         if not isinstance(seo, dict):
-            raise AIContentError("AI yanıtında 'seo' alanı eksik veya geçersiz.")
+            raise AIValidationError("AI yanıtında 'seo' alanı eksik veya geçersiz.")
 
         primary = seo.get("primary_keyword")
         angle = seo.get("creative_angle")
         if not isinstance(primary, str) or not primary.strip():
-            raise AIContentError("AI yanıtında primary_keyword eksik veya geçersiz.")
+            raise AIValidationError("AI yanıtında primary_keyword eksik veya geçersiz.")
         if not isinstance(angle, str) or not angle.strip():
-            raise AIContentError("AI yanıtında creative_angle eksik veya geçersiz.")
+            raise AIValidationError("AI yanıtında creative_angle eksik veya geçersiz.")
 
         groups = (
             "secondary_keywords",
@@ -690,7 +698,7 @@ class AIContentService:
             if not isinstance(values, list) or not all(
                 isinstance(value, str) and value.strip() for value in values
             ):
-                raise AIContentError(f"AI yanıtındaki {group} alanı geçersiz.")
+                raise AIValidationError(f"AI yanıtındaki {group} alanı geçersiz.")
             source_keywords.extend(value.strip() for value in values)
             normalized_groups[group] = list(dict.fromkeys(value.strip() for value in values))
 
@@ -702,13 +710,13 @@ class AIContentService:
         if not isinstance(intents, list) or not intents or not all(
             isinstance(intent, str) and intent in allowed_intents for intent in intents
         ):
-            raise AIContentError("AI yanıtındaki search_intents alanı geçersiz.")
+            raise AIValidationError("AI yanıtındaki search_intents alanı geçersiz.")
 
         keywords = list(dict.fromkeys(keyword.strip() for keyword in source_keywords))
         if len(source_keywords) > 20 or len(keywords) < 5 or len(keywords) > 12:
-            raise AIContentError("AI yanıtındaki keyword seti spam veya beklenen aralık dışında.")
+            raise AIValidationError("AI yanıtındaki keyword seti spam veya beklenen aralık dışında.")
         if any(source_keywords.count(keyword) > 2 for keyword in set(source_keywords)):
-            raise AIContentError("AI yanıtındaki keyword setinde aşırı tekrar var.")
+            raise AIValidationError("AI yanıtındaki keyword setinde aşırı tekrar var.")
 
         seo_metadata: dict[str, object] = {
             "primary_keyword": primary.strip(),
@@ -735,12 +743,12 @@ class AIContentService:
         title = str(data["title"])
         description = str(data["description"])
         if "#" in title or "#" in description:
-            raise AIContentError("AI yanıtında hashtag kullanılamaz.")
+            raise AIValidationError("AI yanıtında hashtag kullanılamaz.")
         if str(seo["primary_keyword"]).casefold() not in title.casefold():
-            raise AIContentError("Primary keyword Pinterest başlığında doğal biçimde yer almalı.")
+            raise AIValidationError("Primary keyword Pinterest başlığında doğal biçimde yer almalı.")
         title_tokens = re.findall(r"[a-z0-9]+", title.casefold())
         if len(title_tokens) > 18 or any(title_tokens.count(token) > 2 for token in set(title_tokens)):
-            raise AIContentError("Pinterest başlığı gereksiz genişletilmiş veya keyword stuffing içeriyor.")
+            raise AIValidationError("Pinterest başlığı gereksiz genişletilmiş veya keyword stuffing içeriyor.")
         AIContentService._validate_creative_type_angle(seo, creative_type)
         if context is None:
             return
@@ -750,7 +758,7 @@ class AIContentService:
         primary_tokens = set(re.findall(r"[a-z0-9]{3,}", str(seo["primary_keyword"]).casefold()))
         generic = {"product", "details", "everyday", "thoughtful", "use"}
         if not (primary_tokens - generic) & evidence_tokens:
-            raise AIContentError("AI yanıtındaki primary keyword ürün verisiyle ilgili değil.")
+            raise AIValidationError("AI yanıtındaki primary keyword ürün verisiyle ilgili değil.")
 
         output = " ".join([
             title, description, str(seo["primary_keyword"]),
@@ -774,13 +782,13 @@ class AIContentService:
         }
         for claim, evidence_forms in restricted_claims.items():
             if claim in output and not any(form in evidence for form in evidence_forms):
-                raise AIContentError("AI yanıtı ürün verisiyle desteklenmeyen bir özellik iddiası içeriyor.")
+                raise AIValidationError("AI yanıtı ürün verisiyle desteklenmeyen bir özellik iddiası içeriyor.")
 
         product_type = _product_type_hint(context)
         if product_type and any(
             product_type not in keyword.casefold() for keyword in seo["long_tail_keywords"]
         ):
-            raise AIContentError("Long-tail keyword ürün türünü açıkça içermeli.")
+            raise AIValidationError("Long-tail keyword ürün türünü açıkça içermeli.")
 
     @staticmethod
     def _validate_creative_type_angle(seo: dict[str, object], creative_type: str | None) -> None:
@@ -797,14 +805,15 @@ class AIContentService:
         }
         required = expected.get(creative_type)
         if required and required not in intents:
-            raise AIContentError("Creative type ile SEO arama niyeti uyumlu değil.")
-        if creative_type == "product_focus" and {
-            "gift_intent", "aesthetic_style_intent"
-        } & intents:
-            raise AIContentError("product_focus creative tek baskın ürün açısı kullanmalı.")
+            raise AIValidationError("Creative type ile SEO arama niyeti uyumlu değil.")
+        # Product search can legitimately include a product's visual style (for
+        # example, a minimalist phone case). Gifting is a competing conversion
+        # intent for product_focus and remains disallowed here.
+        if creative_type == "product_focus" and "gift_intent" in intents:
+            raise AIValidationError("product_focus creative tek baskın ürün açısı kullanmalı.")
         angle_words = re.findall(r"[a-z0-9]+", str(seo["creative_angle"]).casefold())
         if len(angle_words) > 10 or "," in str(seo["creative_angle"]):
-            raise AIContentError("Creative angle tek baskın bir açı olmalı.")
+            raise AIValidationError("Creative angle tek baskın bir açı olmalı.")
 
 
 def _keywords_from_title(title: str) -> list[str]:
