@@ -9,6 +9,7 @@ def test_daily_queue_service_is_oneshot_and_uses_existing_script():
 
     assert "Type=oneshot" in service
     assert "WorkingDirectory=/opt/pinpilot" in service
+    assert "Environment=PYTHONPATH=/opt/pinpilot" in service
     assert "scripts/generate_daily_pins.py" in service
     assert "StandardOutput=journal" in service
 

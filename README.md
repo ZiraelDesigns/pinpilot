@@ -50,3 +50,46 @@ Varsayılan `AI_PROVIDER=mock`, ağ çağrısı ya da API anahtarı gerektirmeye
 The project provides local SQLite-backed models, a health endpoint, a count dashboard, read-only Etsy listing sync, Pinterest OAuth/account/board read infrastructure, and provider-neutral AI Pin creative generation. Image generation uses the official OpenAI Images API when `AI_IMAGE_PROVIDER=openai`. The dashboard sends the first Etsy listing image to GPT-Image-2 and saves the returned Pinterest-vertical PNG locally under `media/generated`. The generated image is attached to the creative record but is not published to Pinterest yet.
 
 For cost control, one image is requested per creative and the dashboard target remains capped at five. Tests do not make network calls.
+
+## Public HTTPS generated media
+
+Generated images are stored under `media/generated` and are internally addressed
+as `/media/generated/<filename>.png`. Pinterest must receive an absolute HTTPS
+URL, for example `https://pins.example.com/media/generated/<filename>.png`.
+
+The VPS Nginx configuration currently exposes media over HTTP only. The prepared
+template at `deploy/nginx/pinpilot-https.conf.example` serves only
+`/media/generated/`, redirects HTTP to HTTPS, and does not expose project files
+or the database. To activate it, use an existing domain/subdomain pointed at the
+VPS, obtain a free Let’s Encrypt certificate, then set this in the VPS `.env`:
+
+```text
+PUBLIC_BASE_URL=https://pins.example.com
+```
+
+No temporary Cloudflare tunnel is required. Cloudflare’s free DNS/proxy can be
+used if a domain is already managed there, but it does not replace ownership of
+a stable domain. Until a stable HTTPS hostname is configured, PinPilot safely
+retains relative media paths and future Pinterest publishing must not use them.
+
+## Production daily Pin queue
+
+The scheduler is a local-only systemd oneshot job. It creates up to the existing
+daily target of 15 Pin records using mockups first, then existing AI creatives,
+and can queue local pending AI work for any gap. It does not call Etsy, Gemini,
+OpenAI, or Pinterest.
+
+On the current UTC-configured VPS, `pinpilot-daily-queue.timer` runs daily at
+00:05 UTC. `Persistent=true` causes one missed run to execute after a reboot.
+Install the tracked unit files after deployment, then enable the timer:
+
+```bash
+cp deploy/systemd/pinpilot-daily-queue.service /etc/systemd/system/
+cp deploy/systemd/pinpilot-daily-queue.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now pinpilot-daily-queue.timer
+systemctl list-timers pinpilot-daily-queue.timer
+```
+
+Failures are available through `journalctl -u pinpilot-daily-queue.service` and
+do not stop the independent `pinpilot.service` web application.

@@ -7,6 +7,7 @@ import mimetypes
 import uuid
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlparse
 
 import httpx
 
@@ -15,6 +16,10 @@ from app.config import PROJECT_ROOT, settings
 
 class AIImageError(Exception):
     """Raised when an image provider cannot produce an image."""
+
+
+class PublicMediaUrlError(ValueError):
+    """Raised when a Pinterest-safe URL cannot be built for local media."""
 
 
 class AIImageProvider(Protocol):
@@ -75,3 +80,21 @@ def save_generated_image(image_bytes: bytes) -> str:
     path = absolute_dir / filename
     path.write_bytes(image_bytes)
     return "/media/generated/" + filename
+
+
+def public_media_url(media_path: str) -> str:
+    """Return a Pinterest-safe absolute HTTPS URL for a local generated image.
+
+    Image storage stays relative so local development works without a domain.
+    A future publishing flow must call this helper and will fail safely until a
+    configured, stable HTTPS origin exists.
+    """
+    if not media_path.startswith("/media/generated/"):
+        raise PublicMediaUrlError("Yalnızca /media/generated/ altındaki yerel görseller yayınlanabilir.")
+
+    base_url = (settings.public_base_url or "").rstrip("/")
+    parsed = urlparse(base_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise PublicMediaUrlError("Pinterest için HTTPS PUBLIC_BASE_URL yapılandırılmamış.")
+
+    return base_url + media_path

@@ -8,6 +8,7 @@ Type=oneshot
 User=root
 WorkingDirectory=/opt/pinpilot
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/pinpilot
 ExecStart=/opt/pinpilot/.venv/bin/python /opt/pinpilot/scripts/generate_daily_pins.py
 
 # Output is retained by systemd journal; a failed run does not affect the

@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     ai_image_provider: str = "mock"
     openai_image_model: str = "gpt-image-2"
     generated_media_dir: str = "media/generated"
+    # Public HTTPS origin used when a future Pinterest request needs an absolute
+    # URL for a locally generated image. Keep unset for local HTTP development.
+    public_base_url: str | None = None
     # This absolute path makes `uvicorn app.main:app` independent of its launch directory.
     # OS environment variables still take precedence over values in this file.
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8")
