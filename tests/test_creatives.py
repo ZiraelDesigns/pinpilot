@@ -154,7 +154,10 @@ def test_mockup_creatives_are_created_once_per_etsy_image_without_ai_calls():
             db.commit()
             assert len(service.ensure_mockup_creatives(product, listing)) == 1
         finally:
+            db.delete(listing)
             db.delete(account)
+            db.flush()
+            db.query(PinCreative).filter_by(product_id=product.id).delete(synchronize_session=False)
             db.delete(product)
             db.commit()
             db.close()
@@ -180,7 +183,10 @@ def test_ai_creative_uses_ai_source_and_does_not_conflict_with_mockup_key(monkey
             assert len(ai) == 1
             assert ai[0].source_type == PinCreativeSourceType.AI.value
         finally:
+            db.delete(listing)
             db.delete(account)
+            db.flush()
+            db.query(PinCreative).filter_by(product_id=product.id).delete(synchronize_session=False)
             db.delete(product)
             db.commit()
             db.close()
@@ -215,7 +221,9 @@ def test_etsy_sync_adds_new_listing_images_to_mockup_pool_without_ai_calls(monke
             assert all(creative.source_type == "mockup" for creative in creatives)
             assert db.query(PinGenerationJob).filter_by(product_id=listing.product_id, status="pending").count() == 1
         finally:
+            db.delete(listing)
             db.delete(account)
+            db.query(PinGenerationJob).filter_by(product_id=listing.product_id).delete(synchronize_session=False)
             db.delete(listing.product)
             db.commit()
             db.close()

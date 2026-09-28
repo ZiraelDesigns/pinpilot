@@ -3,8 +3,22 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
 
 from app.database import Base
 
@@ -421,3 +435,230 @@ class PinterestAccountAnalyticsSnapshot(Base):
 
     account: Mapped[PinterestAccount | None] = relationship(back_populates="analytics_snapshots")
     collection_run: Mapped[AnalyticsCollectionRun | None] = relationship(back_populates="account_snapshots")
+
+
+class Experiment(Base):
+    """A manually evaluated creative test; it never selects or applies a winner."""
+
+    __tablename__ = "experiments"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'running', 'completed', 'paused', 'cancelled')",
+            name="ck_experiments_status",
+        ),
+        CheckConstraint(
+            "evaluation_metric IN ('impressions', 'saves', 'outbound_clicks', 'pin_clicks', "
+            "'engagements', 'engagement_rate', 'pin_click_rate', 'outbound_click_rate')",
+            name="ck_experiments_evaluation_metric",
+        ),
+        Index("ix_experiments_status_start", "status", "start_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    hypothesis: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="draft", nullable=False)
+    evaluation_metric: Mapped[str] = mapped_column(String(32), nullable=False)
+    pinterest_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pinterest_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    account_identifier_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    start_at: Mapped[datetime | None] = mapped_column(DateTime)
+    end_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    variants: Mapped[list["ExperimentVariant"]] = relationship(back_populates="experiment")
+    assignments: Mapped[list["ExperimentAssignment"]] = relationship(
+        back_populates="experiment",
+        primaryjoin="Experiment.id == foreign(ExperimentAssignment.experiment_id)",
+        foreign_keys="ExperimentAssignment.experiment_id",
+        viewonly=True,
+    )
+    evaluations: Mapped[list["ExperimentEvaluation"]] = relationship(back_populates="experiment")
+    pinterest_account: Mapped[PinterestAccount | None] = relationship()
+
+
+class ExperimentVariant(Base):
+    """A named, immutable-at-assignment experiment treatment definition."""
+
+    __tablename__ = "experiment_variants"
+    __table_args__ = (
+        UniqueConstraint("experiment_id", "name", name="uq_experiment_variants_experiment_name"),
+        UniqueConstraint("id", "experiment_id", name="uq_experiment_variants_id_experiment"),
+        Index("ix_experiment_variants_experiment", "experiment_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    experiment_id: Mapped[int] = mapped_column(
+        ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    creative_type: Mapped[str | None] = mapped_column(String(32))
+    source_type: Mapped[str | None] = mapped_column(String(16))
+    creative_angle: Mapped[str | None] = mapped_column(String(255))
+    primary_keyword: Mapped[str | None] = mapped_column(String(255))
+    audience_definition: Mapped[str | None] = mapped_column(Text)
+    configuration: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    experiment: Mapped[Experiment] = relationship(back_populates="variants")
+    assignments: Mapped[list["ExperimentAssignment"]] = relationship(
+        back_populates="variant",
+        primaryjoin="and_(ExperimentVariant.id == ExperimentAssignment.variant_id, "
+        "ExperimentVariant.experiment_id == ExperimentAssignment.experiment_id)",
+        foreign_keys="[ExperimentAssignment.variant_id, ExperimentAssignment.experiment_id]",
+        viewonly=True,
+    )
+
+
+class ExperimentAssignment(Base):
+    """Historical link of exactly one creative or publication to one variant."""
+
+    __tablename__ = "experiment_assignments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["variant_id", "experiment_id"],
+            ["experiment_variants.id", "experiment_variants.experiment_id"],
+            ondelete="RESTRICT",
+            name="fk_experiment_assignment_variant_experiment",
+        ),
+        ForeignKeyConstraint(
+            ["creative_id"], ["pin_creatives.id"], ondelete="RESTRICT",
+            name="fk_experiment_assignment_creative",
+        ),
+        ForeignKeyConstraint(
+            ["published_pin_id"], ["published_pinterest_pins.id"], ondelete="RESTRICT",
+            name="fk_experiment_assignment_published_pin",
+        ),
+        CheckConstraint(
+            "(creative_id IS NOT NULL AND published_pin_id IS NULL) OR "
+            "(creative_id IS NULL AND published_pin_id IS NOT NULL)",
+            name="ck_experiment_assignment_exactly_one_target",
+        ),
+        UniqueConstraint("experiment_id", "creative_id", name="uq_experiment_assignment_creative"),
+        UniqueConstraint("experiment_id", "published_pin_id", name="uq_experiment_assignment_published_pin"),
+        Index("ix_experiment_assignments_experiment_variant", "experiment_id", "variant_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    experiment_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    variant_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    creative_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    published_pin_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    assignment_reason: Mapped[str | None] = mapped_column(Text)
+    metadata_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+    experiment: Mapped[Experiment] = relationship(
+        back_populates="assignments",
+        primaryjoin="Experiment.id == foreign(ExperimentAssignment.experiment_id)",
+        foreign_keys=[experiment_id],
+        viewonly=True,
+    )
+    variant: Mapped[ExperimentVariant] = relationship(
+        back_populates="assignments",
+        primaryjoin="and_(ExperimentAssignment.variant_id == ExperimentVariant.id, "
+        "ExperimentAssignment.experiment_id == ExperimentVariant.experiment_id)",
+        foreign_keys=[variant_id, experiment_id],
+        viewonly=True,
+    )
+    creative: Mapped[PinCreative | None] = relationship()
+    published_pin: Mapped[PublishedPinterestPin | None] = relationship()
+
+    @classmethod
+    def capture_metadata(
+        cls,
+        *,
+        creative: PinCreative | None = None,
+        published_pin: PublishedPinterestPin | None = None,
+    ) -> dict:
+        if (creative is None) == (published_pin is None):
+            raise ValueError("Exactly one creative or published Pin is required")
+        if published_pin is not None:
+            snapshot = deepcopy(published_pin.metadata_snapshot or {})
+            seo = snapshot.get("seo_metadata") or {}
+            return {
+                "creative_type": snapshot.get("creative_type"),
+                "source_type": snapshot.get("source_type"),
+                "creative_angle": snapshot.get("creative_angle") or seo.get("creative_angle"),
+                "primary_keyword": snapshot.get("primary_keyword") or seo.get("primary_keyword"),
+                "audience": snapshot.get("audience") or seo.get("audience_keywords"),
+                "destination_url": snapshot.get("destination_etsy_url"),
+                "published_pin_id": published_pin.id,
+            }
+        seo = deepcopy(creative.seo_metadata or {})
+        return {
+            "creative_type": creative.creative_type,
+            "source_type": creative.source_type,
+            "creative_angle": seo.get("creative_angle"),
+            "primary_keyword": seo.get("primary_keyword"),
+            "audience": seo.get("audience_keywords") or seo.get("audience"),
+            "destination_url": creative.destination_url,
+            "creative_id": creative.id,
+        }
+
+
+class ExperimentEvaluation(Base):
+    """One evaluation specification/run; raw analytics remain in existing tables."""
+
+    __tablename__ = "experiment_evaluations"
+    __table_args__ = (
+        Index("ix_experiment_evaluations_experiment_evaluated", "experiment_id", "evaluated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    experiment_id: Mapped[int] = mapped_column(
+        ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=False
+    )
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    period_start: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    sample_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    metric_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    calculation_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    snapshot_ids: Mapped[list[int]] = mapped_column(JSON, default=list, nullable=False)
+
+    experiment: Mapped[Experiment] = relationship(back_populates="evaluations")
+    variant_results: Mapped[list["ExperimentEvaluationResult"]] = relationship(back_populates="evaluation")
+
+
+class ExperimentEvaluationResult(Base):
+    """Frozen, variant-level aggregate for an evaluation and its source snapshot IDs."""
+
+    __tablename__ = "experiment_evaluation_results"
+    __table_args__ = (
+        UniqueConstraint("evaluation_id", "variant_id", name="uq_experiment_evaluation_variant"),
+        Index("ix_experiment_evaluation_results_variant", "variant_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    evaluation_id: Mapped[int] = mapped_column(
+        ForeignKey("experiment_evaluations.id", ondelete="RESTRICT"), nullable=False
+    )
+    variant_id: Mapped[int] = mapped_column(
+        ForeignKey("experiment_variants.id", ondelete="RESTRICT"), nullable=False
+    )
+    assignment_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    published_pin_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    observation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sample_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    impressions: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    saves: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    pin_clicks: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    outbound_clicks: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    engagements: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    engagement_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    pin_click_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    outbound_click_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    impressions_denominator: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    selected_metric_value: Mapped[Decimal | None] = mapped_column(Numeric(24, 8), nullable=True)
+    source_snapshot_ids: Mapped[list[int]] = mapped_column(JSON, default=list, nullable=False)
+
+    evaluation: Mapped[ExperimentEvaluation] = relationship(back_populates="variant_results")
+    variant: Mapped[ExperimentVariant] = relationship()

@@ -17,6 +17,8 @@ from app.routers.etsy import router as etsy_router
 from app.routers.pinterest import router as pinterest_router
 from app.routers.creatives import router as creatives_router
 from app.services.analytics_dashboard import DashboardFilters, get_dashboard_data
+from app.services.experiments import experiment_summaries
+from app.routers.experiments import router as experiments_router
 
 
 @asynccontextmanager
@@ -87,6 +89,7 @@ app.mount("/media", StaticFiles(directory=str(media_dir)), name="media")
 app.include_router(etsy_router)
 app.include_router(pinterest_router)
 app.include_router(creatives_router)
+app.include_router(experiments_router)
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
 
 
@@ -206,6 +209,7 @@ def dashboard(
         page=analytics_page,
     )
     analytics = get_dashboard_data(db, analytics_filters)
+    experiments = experiment_summaries(db)
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -229,5 +233,6 @@ def dashboard(
             "analytics_start_date": analytics_start.isoformat(),
             "analytics_end_date": analytics_end.isoformat(),
             "analytics_filter_error": filter_error,
+            "experiments": experiments,
         },
     )

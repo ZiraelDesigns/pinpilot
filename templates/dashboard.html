@@ -92,6 +92,14 @@
         <p class="subtitle">Account-level metrics are separate from Pin totals.</p>
         {% if analytics.account_snapshot_count %}<section class="cards" aria-label="Account analytics KPI summary">{% for key, label in [('profile_visits', 'Profile visits'), ('follows', 'Follows'), ('total_audience', 'Total audience'), ('engaged_audience', 'Engaged audience')] %}<article><span>{{ label }}</span><strong>{{ analytics.account_kpis[key] }}</strong></article>{% endfor %}</section>
         {% else %}<p class="unavailable">Account analytics are not available for this date range.</p>{% endif %}
+        <h3>Experiments</h3>
+        <p class="subtitle">Manual experiment tracking. No winner is selected and no PinPilot content is changed.</p>
+        {% if experiments %}<div class="analytics-table-wrap"><table><thead><tr><th>Experiment</th><th>Status</th><th>Dates</th><th>Evaluation period</th><th>Metric</th><th>Variants</th><th>Assignments</th><th>Published Pins</th><th>Analytics</th></tr></thead><tbody>
+          {% for experiment in experiments %}<tr><td><a href="/experiments/{{ experiment.id }}">{{ experiment.name }}</a></td><td>{{ experiment.status }}</td><td>{{ experiment.start_at or '—' }}{% if experiment.end_at %} – {{ experiment.end_at }}{% endif %}</td><td>{% if experiment.evaluation_period_start %}{{ experiment.evaluation_period_start }} – {{ experiment.evaluation_period_end }}{% else %}Not evaluated{% endif %}</td><td>{{ experiment.evaluation_metric }}</td><td>{{ experiment.variant_count }}</td><td>{{ experiment.assignment_count }}</td><td>{{ experiment.published_sample_count }}</td><td>{% if experiment.analytics_available %}Collected data available{% else %}No analytics data for evaluation{% endif %}</td></tr>
+          <tr><td colspan="9"><div class="analytics-table-wrap"><table><thead><tr><th>Variant</th><th>Assignments</th><th>Published Pins</th><th>Sample size</th><th>{{ experiment.evaluation_metric }}</th><th>Impressions</th><th>Saves</th><th>Outbound clicks</th></tr></thead><tbody>
+            {% for result in experiment.variant_results %}<tr><td>{{ result.variant_name }}</td><td>{{ result.assignment_count }}</td><td>{{ result.published_pin_count }}</td><td>{{ result.sample_size }}</td><td>{% if result.metric_value is not none %}{{ result.metric_value }}{% else %}Not available{% endif %}</td><td>{% if result.impressions is not none %}{{ result.impressions }}{% else %}Not available{% endif %}</td><td>{% if result.saves is not none %}{{ result.saves }}{% else %}Not available{% endif %}</td><td>{% if result.outbound_clicks is not none %}{{ result.outbound_clicks }}{% else %}Not available{% endif %}</td></tr>{% endfor %}
+          </tbody></table></div></td></tr>{% endfor %}
+        </tbody></table></div>{% else %}<p class="unavailable">No experiments have been created.</p>{% endif %}
       </section>
       <section class="etsy-connection" aria-label="Daily Pin queue">
         <h2>Bugünün Pin Kuyruğu</h2>

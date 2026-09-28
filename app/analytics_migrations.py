@@ -3,6 +3,15 @@
 from sqlalchemy import Engine, MetaData, Table, inspect, text
 from sqlalchemy.schema import CreateTable
 
+from app.database import Base
+from app.models import (
+    Experiment,
+    ExperimentAssignment,
+    ExperimentEvaluation,
+    ExperimentEvaluationResult,
+    ExperimentVariant,
+)
+
 
 _SNAPSHOT_COLUMNS = {
     "published_pin_id": (
@@ -114,7 +123,41 @@ def upgrade_analytics_schema(engine: Engine) -> None:
     The legacy metric columns are made nullable with a data-preserving SQLite table
     rebuild (or PostgreSQL nullability alteration). Repeated calls are safe.
     """
+    # Additive, create-if-missing extension of the application's existing
+    # create_all + guarded-upgrade migration path. Existing analytics tables and
+    # their rows are not altered by experiment setup.
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[
+            Experiment.__table__,
+            ExperimentVariant.__table__,
+            ExperimentAssignment.__table__,
+            ExperimentEvaluation.__table__,
+            ExperimentEvaluationResult.__table__,
+        ],
+    )
     table_names = set(inspect(engine).get_table_names())
+    experiment_columns = {
+        "experiments": {
+            "pinterest_account_id": (
+                "INTEGER REFERENCES pinterest_accounts(id) ON DELETE SET NULL"
+            ),
+            "account_identifier_snapshot": "VARCHAR(255)",
+        },
+        "experiment_evaluations": {
+            "snapshot_ids": "JSON NOT NULL DEFAULT '[]'",
+        },
+    }
+    with engine.begin() as connection:
+        for table_name, additions in experiment_columns.items():
+            if table_name not in table_names:
+                continue
+            columns = {column["name"] for column in inspect(connection).get_columns(table_name)}
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.execute(text(
+                        f"ALTER TABLE {table_name} ADD COLUMN {name} {definition}"
+                    ))
     if "analytics_snapshots" not in table_names:
         return
 
