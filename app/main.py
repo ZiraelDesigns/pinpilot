@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -9,17 +9,20 @@ from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.config import PROJECT_ROOT, settings
+from app.analytics_migrations import upgrade_analytics_schema
 from app.database import Base, engine, get_db
 from app.models import EtsyAccount, EtsySyncRun, Pin, PinCreative, PinGenerationJob, PinterestAccount, PinterestBoard, Product
 from app.models.core import PinCreativeSourceType, PinStatus
 from app.routers.etsy import router as etsy_router
 from app.routers.pinterest import router as pinterest_router
 from app.routers.creatives import router as creatives_router
+from app.services.analytics_dashboard import DashboardFilters, get_dashboard_data
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    upgrade_analytics_schema(engine)
     inspector = inspect(engine)
     if "pin_creatives" in inspector.get_table_names():
         columns = {column["name"] for column in inspector.get_columns("pin_creatives")}
@@ -99,6 +102,15 @@ def dashboard(
     etsy_error: str | None = None,
     pinterest_message: str | None = None,
     pinterest_error: str | None = None,
+    period: str = "30",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    account_id: int | None = None,
+    product_id: int | None = None,
+    creative_type: str | None = None,
+    source_type: str | None = None,
+    board_id: int | None = None,
+    page: int = 1,
     db: Session = Depends(get_db),
 ):
     counts = {
@@ -163,6 +175,37 @@ def dashboard(
     )
     products = db.query(Product).order_by(Product.title).all()
     creatives = db.query(PinCreative).order_by(PinCreative.created_at.desc()).all()
+    today = datetime.now().date()
+    filter_error = None
+    if period in {"7", "30", "90"}:
+        analytics_end = today
+        analytics_start = today - timedelta(days=int(period) - 1)
+    elif period == "custom":
+        try:
+            analytics_start = date.fromisoformat(start_date or "")
+            analytics_end = date.fromisoformat(end_date or "")
+            if analytics_end < analytics_start:
+                raise ValueError
+        except ValueError:
+            analytics_start = today - timedelta(days=29)
+            analytics_end = today
+            filter_error = "Custom date range is invalid; showing the last 30 days."
+    else:
+        period = "30"
+        analytics_start = today - timedelta(days=29)
+        analytics_end = today
+    analytics_page = max(1, min(page, 100000))
+    analytics_filters = DashboardFilters(
+        start=analytics_start,
+        end=analytics_end,
+        account_id=account_id,
+        product_id=product_id,
+        creative_type=creative_type,
+        source_type=source_type,
+        board_id=board_id,
+        page=analytics_page,
+    )
+    analytics = get_dashboard_data(db, analytics_filters)
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -180,5 +223,11 @@ def dashboard(
             "pinterest_error": pinterest_error,
             "products": products,
             "creatives": creatives,
+            "analytics": analytics,
+            "analytics_filters": analytics_filters,
+            "analytics_period": period,
+            "analytics_start_date": analytics_start.isoformat(),
+            "analytics_end_date": analytics_end.isoformat(),
+            "analytics_filter_error": filter_error,
         },
     )

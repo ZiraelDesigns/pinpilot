@@ -18,6 +18,7 @@ os.environ["AI_PROVIDER"] = "mock"
 os.environ["AI_IMAGE_PROVIDER"] = "mock"
 
 from app.database import Base, engine  # noqa: E402
+from app.analytics_migrations import upgrade_analytics_schema  # noqa: E402
 import app.models  # noqa: E402,F401 - registers ORM tables before create_all.
 
 
@@ -26,6 +27,7 @@ def isolated_database():
     """Give every test a fresh schema without ever touching pinpilot.db."""
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    upgrade_analytics_schema(engine)
     try:
         yield
     finally:

@@ -1,8 +1,9 @@
-from datetime import datetime
+from copy import deepcopy
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Numeric, String, Text
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -72,6 +73,7 @@ class Pin(Base):
     product: Mapped[Product | None] = relationship(back_populates="pins")
     creative: Mapped["PinCreative | None"] = relationship(back_populates="pins")
     analytics: Mapped[list["AnalyticsSnapshot"]] = relationship(back_populates="pin")
+    published_pins: Mapped[list["PublishedPinterestPin"]] = relationship(back_populates="pin")
 
 
 class PinGenerationJob(Base):
@@ -137,6 +139,9 @@ class PinterestAccount(Base):
     boards: Mapped[list["PinterestBoard"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )
+    published_pins: Mapped[list["PublishedPinterestPin"]] = relationship(back_populates="account")
+    analytics_runs: Mapped[list["AnalyticsCollectionRun"]] = relationship(back_populates="account")
+    analytics_snapshots: Mapped[list["PinterestAccountAnalyticsSnapshot"]] = relationship(back_populates="account")
 
 
 class PinterestOAuthCredential(Base):
@@ -179,6 +184,7 @@ class PinterestBoard(Base):
     privacy: Mapped[str | None] = mapped_column(String(32))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     account: Mapped[PinterestAccount] = relationship(back_populates="boards")
+    published_pins: Mapped[list["PublishedPinterestPin"]] = relationship(back_populates="board")
 
 
 class EtsyAccount(Base):
@@ -274,8 +280,144 @@ class AnalyticsSnapshot(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     pin_id: Mapped[int | None] = mapped_column(ForeignKey("pins.id"))
-    impressions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    saves: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    outbound_clicks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    impressions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    saves: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outbound_clicks: Mapped[int | None] = mapped_column(Integer, nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    published_pin_id: Mapped[int | None] = mapped_column(
+        ForeignKey("published_pinterest_pins.id", ondelete="SET NULL"), nullable=True
+    )
+    collection_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("analytics_collection_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    metric_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    pin_clicks: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    engagements: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    engagement_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    pin_click_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    outbound_click_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    metric_schema_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     pin: Mapped[Pin | None] = relationship(back_populates="analytics")
+    published_pin: Mapped["PublishedPinterestPin | None"] = relationship(back_populates="analytics")
+    collection_run: Mapped["AnalyticsCollectionRun | None"] = relationship(back_populates="pin_snapshots")
+
+
+class PublishedPinterestPin(Base):
+    """A Pinterest publication linked to its local scheduled Pin and as-published metadata."""
+
+    __tablename__ = "published_pinterest_pins"
+    __table_args__ = (
+        Index("ix_published_pins_account_published", "account_id", "published_at"),
+        Index("ix_published_pins_board_published", "board_id", "published_at"),
+        Index("ix_published_pins_pin_id", "pin_id"),
+        Index(
+            "uq_published_pins_account_external_id",
+            "account_id",
+            "external_pin_id",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pin_id: Mapped[int | None] = mapped_column(ForeignKey("pins.id", ondelete="SET NULL"), nullable=True)
+    # Nullable after account disconnect/deletion; the immutable identifier below retains provenance.
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pinterest_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    board_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pinterest_boards.id", ondelete="SET NULL"), nullable=True
+    )
+    account_identifier_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    external_pin_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    published_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    metadata_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+    pin: Mapped[Pin | None] = relationship(back_populates="published_pins")
+    account: Mapped[PinterestAccount | None] = relationship(back_populates="published_pins")
+    board: Mapped[PinterestBoard | None] = relationship(back_populates="published_pins")
+    analytics: Mapped[list[AnalyticsSnapshot]] = relationship(back_populates="published_pin")
+
+    @classmethod
+    def capture_metadata(cls, pin: Pin) -> dict:
+        """Copy only analysis-relevant creative fields at publication time."""
+        creative = pin.creative
+        seo = deepcopy(creative.seo_metadata or {}) if creative else {}
+        return {
+            "product_id": creative.product_id if creative else pin.product_id,
+            "creative_type": creative.creative_type if creative else None,
+            "source_type": creative.source_type if creative else None,
+            "creative_title": creative.title if creative else pin.title,
+            "creative_description": creative.description if creative else pin.description,
+            "destination_etsy_url": creative.destination_url if creative else pin.destination_url,
+            "seo_metadata": seo,
+            "primary_keyword": seo.get("primary_keyword"),
+            "creative_angle": seo.get("creative_angle"),
+            "image_media_reference": (
+                pin.image_path or (creative.image_path or creative.source_image_url if creative else None)
+            ),
+        }
+
+
+class AnalyticsCollectionRun(Base):
+    """Audit row for one future analytics collection attempt; contains no credentials."""
+
+    __tablename__ = "analytics_collection_runs"
+    __table_args__ = (Index("ix_analytics_runs_account_started_status", "account_id", "started_at", "status"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pinterest_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    account_identifier_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="running", nullable=False)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    scope: Mapped[str] = mapped_column(String(32), default="all", nullable=False)
+
+    account: Mapped[PinterestAccount | None] = relationship(back_populates="analytics_runs")
+    pin_snapshots: Mapped[list[AnalyticsSnapshot]] = relationship(back_populates="collection_run")
+    account_snapshots: Mapped[list["PinterestAccountAnalyticsSnapshot"]] = relationship(
+        back_populates="collection_run"
+    )
+
+
+class PinterestAccountAnalyticsSnapshot(Base):
+    __tablename__ = "pinterest_account_analytics_snapshots"
+    __table_args__ = (
+        Index("ix_account_analytics_account_metric_date", "account_id", "metric_date"),
+        Index(
+            "uq_account_analytics_run_account_period",
+            "collection_run_id",
+            "account_id",
+            "period_start",
+            "period_end",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pinterest_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    collection_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("analytics_collection_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    metric_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    profile_visits: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    follows: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    total_audience: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    engaged_audience: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    metric_schema_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    account: Mapped[PinterestAccount | None] = relationship(back_populates="analytics_snapshots")
+    collection_run: Mapped[AnalyticsCollectionRun | None] = relationship(back_populates="account_snapshots")

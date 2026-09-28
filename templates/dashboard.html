@@ -16,6 +16,83 @@
         <article><span>Scheduled pins</span><strong id="scheduled-pins-count">{{ counts.scheduled_pins }}</strong></article>
         <article><span>Published pins</span><strong id="published-pins-count">{{ counts.published_pins }}</strong></article>
       </section>
+      <section class="etsy-connection analytics-dashboard" aria-label="Pinterest analytics">
+        <h2>Pinterest Analytics</h2>
+        <p class="subtitle">Yalnızca toplanmış analytics snapshot'ları gösterilir. Pin ve hesap metrikleri ayrı tutulur.</p>
+        {% if analytics_filter_error %}<p class="notice error">{{ analytics_filter_error }}</p>{% endif %}
+        <form method="get" action="/" class="analytics-filters">
+          <label>Date range
+            <select name="period" id="analytics-period">
+              <option value="7" {% if analytics_period == '7' %}selected{% endif %}>Last 7 days</option>
+              <option value="30" {% if analytics_period == '30' %}selected{% endif %}>Last 30 days</option>
+              <option value="90" {% if analytics_period == '90' %}selected{% endif %}>Last 90 days</option>
+              <option value="custom" {% if analytics_period == 'custom' %}selected{% endif %}>Custom range</option>
+            </select>
+          </label>
+          <label>From <input type="date" name="start_date" value="{{ analytics_start_date }}"></label>
+          <label>To <input type="date" name="end_date" value="{{ analytics_end_date }}"></label>
+          <label>Pinterest account
+            <select name="account_id"><option value="">All accounts</option>{% for account in analytics.accounts %}<option value="{{ account.id }}" {% if analytics_filters.account_id == account.id %}selected{% endif %}>{{ account.account_name }}</option>{% endfor %}</select>
+          </label>
+          <label>Product
+            <select name="product_id"><option value="">All products</option>{% for product in analytics.products_filter %}<option value="{{ product.id }}" {% if analytics_filters.product_id == product.id %}selected{% endif %}>{{ product.title }}</option>{% endfor %}</select>
+          </label>
+          <label>Creative type
+            <select name="creative_type"><option value="">All types</option>{% for kind in ['product_focus', 'lifestyle', 'problem_solution', 'gift_idea', 'minimalist'] %}<option value="{{ kind }}" {% if analytics_filters.creative_type == kind %}selected{% endif %}>{{ kind | replace('_', ' ') | title }}</option>{% endfor %}</select>
+          </label>
+          <label>Source type
+            <select name="source_type"><option value="">All sources</option>{% for source in ['ai', 'mockup'] %}<option value="{{ source }}" {% if analytics_filters.source_type == source %}selected{% endif %}>{{ source | title }}</option>{% endfor %}</select>
+          </label>
+          <label>Board
+            <select name="board_id"><option value="">All boards</option>{% for board in analytics.boards_filter %}<option value="{{ board.id }}" {% if analytics_filters.board_id == board.id %}selected{% endif %}>{{ board.name }}</option>{% endfor %}</select>
+          </label>
+          <button type="submit">Apply filters</button>
+        </form>
+        {% if not analytics.has_any_account %}
+          <p class="notice">No Pinterest account is connected and no account records are available.</p>
+        {% elif analytics.snapshot_count == 0 and analytics.account_snapshot_count == 0 %}
+          {% if analytics.publication_count == 0 %}<p class="notice">No analytics or published Pins are available for this date range.</p>
+          {% else %}<p class="notice">No analytics snapshots are available for the selected date range.</p>{% endif %}
+        {% endif %}
+        <h3>Pin performance summary</h3>
+        <section class="cards analytics-kpis" aria-label="Pin analytics KPI summary">
+          {% for key, label in [('impressions', 'Impressions'), ('saves', 'Saves'), ('pin_clicks', 'Pin clicks'), ('outbound_clicks', 'Outbound clicks'), ('engagements', 'Engagements'), ('engagement_rate', 'Engagement rate'), ('pin_click_rate', 'Pin click rate'), ('outbound_click_rate', 'Outbound click rate')] %}
+            <article><span>{{ label }}</span><strong>{{ analytics.kpis[key] }}</strong></article>
+          {% endfor %}
+        </section>
+        <h3>Trends over time</h3>
+        <section class="analytics-charts" aria-label="Analytics trends">
+          {% for key, label in [('impressions', 'Impressions over time'), ('outbound_clicks', 'Outbound clicks over time'), ('saves', 'Saves over time')] %}
+            <article class="analytics-chart"><h4>{{ label }}</h4>
+              {% if analytics.charts[key] %}<ul>{% for point in analytics.charts[key] %}<li><time>{{ point.date }}</time>{% if point.value is none %}<span class="unavailable">Not available</span>{% else %}<span class="chart-track"><span class="chart-bar" style="width: {{ point.width }}%"></span></span><strong>{{ point.value }}</strong>{% endif %}</li>{% endfor %}</ul>
+              {% else %}<p class="unavailable">No data</p>{% endif %}
+            </article>
+          {% endfor %}
+        </section>
+        <h3>Product performance</h3>
+        {% if analytics.products %}<div class="analytics-table-wrap"><table><thead><tr><th>Product</th><th>Pins</th><th>Impressions</th><th>Saves</th><th>Pin clicks</th><th>Outbound clicks</th><th>Engagements</th></tr></thead><tbody>
+          {% for row in analytics.products %}<tr><td>{{ row.product_title }}</td><td>{{ row.pins }}</td><td>{{ row.impressions if row.impressions is not none else 'Not available' }}</td><td>{{ row.saves if row.saves is not none else 'Not available' }}</td><td>{{ row.pin_clicks if row.pin_clicks is not none else 'Not available' }}</td><td>{{ row.outbound_clicks if row.outbound_clicks is not none else 'Not available' }}</td><td>{{ row.engagements if row.engagements is not none else 'Not available' }}</td></tr>{% endfor %}
+        </tbody></table></div>
+        {% if analytics.product_count > analytics.product_page_size %}<nav class="analytics-pagination" aria-label="Product results pages">
+          {% if analytics.product_page > 1 %}<a href="/?period={{ analytics_period }}&amp;start_date={{ analytics_start_date }}&amp;end_date={{ analytics_end_date }}&amp;account_id={{ analytics_filters.account_id or '' }}&amp;product_id={{ analytics_filters.product_id or '' }}&amp;creative_type={{ analytics_filters.creative_type or '' }}&amp;source_type={{ analytics_filters.source_type or '' }}&amp;board_id={{ analytics_filters.board_id or '' }}&amp;page={{ analytics.product_page - 1 }}">Previous</a>{% endif %}
+          <span>Page {{ analytics.product_page }} of {{ ((analytics.product_count - 1) // analytics.product_page_size) + 1 }}</span>
+          {% if analytics.product_page * analytics.product_page_size < analytics.product_count %}<a href="/?period={{ analytics_period }}&amp;start_date={{ analytics_start_date }}&amp;end_date={{ analytics_end_date }}&amp;account_id={{ analytics_filters.account_id or '' }}&amp;product_id={{ analytics_filters.product_id or '' }}&amp;creative_type={{ analytics_filters.creative_type or '' }}&amp;source_type={{ analytics_filters.source_type or '' }}&amp;board_id={{ analytics_filters.board_id or '' }}&amp;page={{ analytics.product_page + 1 }}">Next</a>{% endif %}
+        </nav>{% endif %}
+        {% else %}<p class="unavailable">No product performance data for these filters.</p>{% endif %}
+        <h3>Creative performance</h3>
+        <div class="analytics-dimensions">
+          {% for title, rows, key in [('Creative type', analytics.creative_types, 'creative_type'), ('Source type', analytics.sources, 'source_type'), ('Creative angle', analytics.angles, 'creative_angle'), ('Primary keyword', analytics.keywords, 'primary_keyword')] %}
+            <article><h4>{{ title }}</h4>{% if rows %}<div class="analytics-table-wrap"><table><thead><tr><th>{{ title }}</th><th>Pins</th><th>Impressions</th><th>Saves</th><th>Outbound clicks</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row[key] or 'Not available' }}</td><td>{{ row.pins }}</td><td>{{ row.impressions if row.impressions is not none else 'Not available' }}</td><td>{{ row.saves if row.saves is not none else 'Not available' }}</td><td>{{ row.outbound_clicks if row.outbound_clicks is not none else 'Not available' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="unavailable">No data</p>{% endif %}</article>
+          {% endfor %}
+        </div>
+        <h3>Board performance</h3>
+        {% if analytics.boards %}<div class="analytics-table-wrap"><table><thead><tr><th>Board</th><th>Pins</th><th>Impressions</th><th>Saves</th><th>Pin clicks</th><th>Outbound clicks</th></tr></thead><tbody>{% for row in analytics.boards %}<tr><td>{{ row.board_name or 'No board recorded' }}</td><td>{{ row.pins }}</td><td>{{ row.impressions if row.impressions is not none else 'Not available' }}</td><td>{{ row.saves if row.saves is not none else 'Not available' }}</td><td>{{ row.pin_clicks if row.pin_clicks is not none else 'Not available' }}</td><td>{{ row.outbound_clicks if row.outbound_clicks is not none else 'Not available' }}</td></tr>{% endfor %}</tbody></table></div>
+        {% else %}<p class="unavailable">No board performance data for these filters.</p>{% endif %}
+        <h3>Account performance</h3>
+        <p class="subtitle">Account-level metrics are separate from Pin totals.</p>
+        {% if analytics.account_snapshot_count %}<section class="cards" aria-label="Account analytics KPI summary">{% for key, label in [('profile_visits', 'Profile visits'), ('follows', 'Follows'), ('total_audience', 'Total audience'), ('engaged_audience', 'Engaged audience')] %}<article><span>{{ label }}</span><strong>{{ analytics.account_kpis[key] }}</strong></article>{% endfor %}</section>
+        {% else %}<p class="unavailable">Account analytics are not available for this date range.</p>{% endif %}
+      </section>
       <section class="etsy-connection" aria-label="Daily Pin queue">
         <h2>Bugünün Pin Kuyruğu</h2>
         <section class="cards" aria-label="Daily queue counts">

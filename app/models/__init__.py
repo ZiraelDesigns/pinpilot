@@ -1,5 +1,6 @@
 from app.models.core import (
     AnalyticsSnapshot,
+    AnalyticsCollectionRun,
     EtsyAccount,
     EtsyListing,
     EtsySyncRun,
@@ -9,6 +10,8 @@ from app.models.core import (
     PinCreative,
     PinCreativeSourceType,
     PinGenerationJob,
+    PinterestAccountAnalyticsSnapshot,
+    PublishedPinterestPin,
     PinterestAccount,
     PinterestBoard,
     PinterestOAuthCredential,
@@ -18,6 +21,7 @@ from app.models.core import (
 
 __all__ = [
     "AnalyticsSnapshot",
+    "AnalyticsCollectionRun",
     "EtsyAccount",
     "EtsyListing",
     "EtsySyncRun",
@@ -27,6 +31,8 @@ __all__ = [
     "PinCreative",
     "PinCreativeSourceType",
     "PinGenerationJob",
+    "PinterestAccountAnalyticsSnapshot",
+    "PublishedPinterestPin",
     "PinterestAccount",
     "PinterestBoard",
     "PinterestOAuthCredential",

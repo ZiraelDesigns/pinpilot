@@ -25,4 +25,31 @@ input, textarea, select { font: inherit; padding: .35rem; }
 textarea { min-height: 4rem; min-width: 20rem; }
 .creative-edit-form { display: block; margin-top: .75rem; }
 
+.analytics-dashboard { max-width: 100%; overflow: hidden; }
+.analytics-dashboard h3 { margin: 1.75rem 0 .75rem; }
+.analytics-dashboard h4 { margin: 0 0 .75rem; }
+.analytics-filters { display: flex; flex-wrap: wrap; align-items: end; gap: .4rem; }
+.analytics-filters label { min-width: 130px; }
+.analytics-kpis { grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); margin-top: .75rem; }
+.analytics-kpis article { padding: .9rem; }
+.analytics-kpis article strong { font-size: 1.35rem; overflow-wrap: anywhere; }
+.analytics-charts, .analytics-dimensions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 1rem; }
+.analytics-chart { padding: 1rem; }
+.analytics-chart ul { list-style: none; padding: 0; margin: 0; }
+.analytics-chart li { display: grid; grid-template-columns: 6.2rem minmax(4rem, 1fr) auto; align-items: center; gap: .6rem; margin: .4rem 0; font-size: .9rem; }
+.chart-track { height: .7rem; border-radius: 1rem; background: #f0edf3; overflow: hidden; }
+.chart-bar { display: block; height: 100%; border-radius: inherit; background: #d74466; }
+.unavailable { color: #6a6470; font-style: italic; }
+.analytics-table-wrap { max-width: 100%; overflow-x: auto; }
+.analytics-dashboard table { width: 100%; border-collapse: collapse; background: white; }
+.analytics-dashboard th, .analytics-dashboard td { padding: .55rem .65rem; border-bottom: 1px solid #eeeaf1; text-align: left; white-space: nowrap; }
+.analytics-dashboard th { color: #6a6470; font-weight: 600; }
+.analytics-dimensions > article { min-width: 0; }
+.analytics-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 1rem; margin-top: .75rem; }
+.analytics-pagination a { color: #a72949; }
+@media (max-width: 600px) {
+  main { margin: 2rem auto; padding: 0 1rem; }
+  .analytics-chart li { grid-template-columns: 5.5rem minmax(2rem, 1fr) auto; gap: .4rem; }
+}
+
 .creative-image { width: 100%; max-width: 420px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 12px; display: block; margin: .75rem 0 1rem; }
