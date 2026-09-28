@@ -5,6 +5,8 @@ from sqlalchemy.schema import CreateTable
 
 from app.database import Base
 from app.models import (
+    AIDailyQuotaSlot,
+    AIPipelineControl,
     Experiment,
     ExperimentAssignment,
     ExperimentEvaluation,
@@ -129,6 +131,8 @@ def upgrade_analytics_schema(engine: Engine) -> None:
     Base.metadata.create_all(
         bind=engine,
         tables=[
+            AIPipelineControl.__table__,
+            AIDailyQuotaSlot.__table__,
             Experiment.__table__,
             ExperimentVariant.__table__,
             ExperimentAssignment.__table__,
@@ -136,6 +140,12 @@ def upgrade_analytics_schema(engine: Engine) -> None:
             ExperimentEvaluationResult.__table__,
         ],
     )
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO ai_pipeline_controls (id, enabled, updated_at) "
+            "SELECT 1, 1, CURRENT_TIMESTAMP WHERE NOT EXISTS "
+            "(SELECT 1 FROM ai_pipeline_controls WHERE id = 1)"
+        ))
     table_names = set(inspect(engine).get_table_names())
     experiment_columns = {
         "experiments": {

@@ -19,6 +19,8 @@ from app.routers.creatives import router as creatives_router
 from app.services.analytics_dashboard import DashboardFilters, get_dashboard_data
 from app.services.experiments import experiment_summaries
 from app.routers.experiments import router as experiments_router
+from app.routers.pipeline import router as pipeline_router
+from app.services.ai_pipeline import dashboard_pipeline_status
 
 
 @asynccontextmanager
@@ -90,6 +92,7 @@ app.include_router(etsy_router)
 app.include_router(pinterest_router)
 app.include_router(creatives_router)
 app.include_router(experiments_router)
+app.include_router(pipeline_router)
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
 
 
@@ -210,6 +213,7 @@ def dashboard(
     )
     analytics = get_dashboard_data(db, analytics_filters)
     experiments = experiment_summaries(db)
+    pipeline_status = dashboard_pipeline_status(db)
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -234,5 +238,6 @@ def dashboard(
             "analytics_end_date": analytics_end.isoformat(),
             "analytics_filter_error": filter_error,
             "experiments": experiments,
+            "pipeline_status": pipeline_status,
         },
     )

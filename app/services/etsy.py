@@ -17,7 +17,8 @@ from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import EtsyAccount, EtsyListing, EtsyOAuthCredential, EtsyOAuthState, EtsySyncRun, Pin, Product
+from app.models import EtsyAccount, EtsyListing, EtsyOAuthCredential, EtsyOAuthState, EtsySyncRun, Pin, PinCreative, Product
+from app.models.core import PinCreativeSourceType
 from app.models.core import PinStatus
 
 ETSY_AUTHORIZE_URL = "https://www.etsy.com/oauth/connect"
@@ -294,7 +295,11 @@ class EtsyApiService:
             self.db.flush()
             created_mockups = pool_service.ensure_mockup_creatives(product, listing) if product else []
             new_mockups += len(created_mockups)
-            if product and (is_new or changed_fields - {"images"}):
+            has_ai_creative = bool(product and self.db.query(PinCreative.id).filter_by(
+                product_id=product.id,
+                source_type=PinCreativeSourceType.AI.value,
+            ).first())
+            if product and (is_new or changed_fields - {"images"} or not has_ai_creative):
                 pool_service.prepare_ai_generation_job(product)
             if is_new:
                 new_products += 1

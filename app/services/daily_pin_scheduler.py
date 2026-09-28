@@ -1,8 +1,7 @@
 """Prepare a bounded daily Pin queue from the local creative pool.
 
-This module deliberately has no Etsy, Pinterest, or AI-provider dependency. It
-only turns existing creatives into local ``Pin`` records; publishing and remote
-creative generation remain separate, explicit workflows.
+This module only turns existing creatives into local ``Pin`` records and queues
+AI demand independently from local Pin scheduling; it never calls a provider.
 """
 
 from __future__ import annotations
@@ -13,11 +12,14 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Pin, PinCreative, PinGenerationJob, Product
+from app.models import Pin, PinCreative, PinGenerationJob
 from app.models.core import PinCreativeSourceType, PinCreativeStatus, PinStatus
+from app.services.ai_pipeline import AI_DAILY_CREATIVE_QUOTA, enqueue_daily_generation_job
 
 
 DAILY_PIN_TARGET = 15
+DAILY_LOCAL_PIN_TARGET = DAILY_PIN_TARGET
+DAILY_AI_CREATIVE_QUOTA = AI_DAILY_CREATIVE_QUOTA
 SCHEDULE_HOURS = (9, 12, 15, 18, 21)
 _ELIGIBLE_CREATIVE_STATUSES = (
     PinCreativeStatus.DRAFT.value,
@@ -71,15 +73,18 @@ class DailyPinScheduler:
         ).all())
         slots_needed = max(0, self.daily_target - already_prepared)
         pending_jobs = self.db.query(PinGenerationJob).filter_by(status="pending").count()
+        ai_jobs_created = int(enqueue_daily_generation_job(self.db))
 
         if not slots_needed:
+            self.db.commit()
+            pending_jobs = self.db.query(PinGenerationJob).filter_by(status="pending").count()
             return DailyScheduleResult(
                 target=self.daily_target,
                 already_prepared=already_prepared,
                 prepared=(),
                 mockups_prepared=0,
                 ai_prepared=0,
-                ai_jobs_created=0,
+                ai_jobs_created=ai_jobs_created,
                 pending_ai_jobs=pending_jobs,
             )
 
@@ -126,8 +131,6 @@ class DailyPinScheduler:
             for index, creative in enumerate(selected)
         )
         self.db.add_all(prepared)
-        shortage = slots_needed - len(prepared)
-        ai_jobs_created = self._queue_missing_ai_work(shortage, selected)
         self.db.commit()
 
         return DailyScheduleResult(
@@ -145,36 +148,6 @@ class DailyPinScheduler:
             ai_jobs_created=ai_jobs_created,
             pending_ai_jobs=self.db.query(PinGenerationJob).filter_by(status="pending").count(),
         )
-
-    def _queue_missing_ai_work(
-        self, shortage: int, selected: list[PinCreative]
-    ) -> int:
-        """Queue only uncovered creative capacity; never execute it here."""
-        if shortage <= 0:
-            return 0
-
-        pending_capacity = sum(
-            job.requested_count
-            for job in self.db.scalars(
-                select(PinGenerationJob).where(PinGenerationJob.status == "pending")
-            )
-        )
-        missing_capacity = max(0, shortage - pending_capacity)
-        if not missing_capacity:
-            return 0
-
-        product = selected[0].product if selected else self.db.scalars(
-            select(Product).order_by(Product.id)
-        ).first()
-        if not product:
-            return 0
-
-        self.db.add(PinGenerationJob(
-            product_id=product.id,
-            requested_count=missing_capacity,
-            status="pending",
-        ))
-        return 1
 
     @staticmethod
     def _candidate_sort_key(creative: PinCreative) -> tuple[int, int, datetime, int]:

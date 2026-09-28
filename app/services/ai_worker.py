@@ -16,13 +16,20 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.models import PinGenerationJob, Product
+from app.models import AIDailyQuotaSlot
 from app.models.core import PinCreativeType
 from app.services.ai_content import AIContentError, AIContentService, AIValidationError
 from app.services.ai_image import AIImageError
+from app.services.ai_pipeline import (
+    AIDailyQuotaExceededError,
+    AIPipelinePausedError,
+    lock_pipeline_if_enabled,
+    quota_counts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,12 +104,45 @@ class AIGenerationWorker:
             product = db.get(Product, product_id) if product_id else None
             if not job or job.status != "processing" or job.worker_id != self.worker_id or not product:
                 return WorkerResult(claimed=True, failed=True)
+            already_created = int(db.scalar(select(func.count(AIDailyQuotaSlot.id)).where(
+                AIDailyQuotaSlot.job_id == job.id,
+                AIDailyQuotaSlot.state == "completed",
+            )) or 0)
+            remaining_requested = max(0, job.requested_count - already_created)
+            if remaining_requested == 0:
+                job.status = "completed"
+                job.completed_at = self.now()
+                job.locked_at = None
+                job.worker_id = None
+                self._release_product(db, product)
+                db.commit()
+                return WorkerResult(claimed=True, completed=True)
             try:
                 created = self.content_service_factory(db).generate(
-                    product, PinCreativeType.PRODUCT_FOCUS, max(1, job.requested_count)
+                    product, PinCreativeType.PRODUCT_FOCUS, remaining_requested,
+                    job_id=job.id, force_new=True,
                 )
+            except (AIPipelinePausedError, AIDailyQuotaExceededError):
+                job.status = "pending"
+                job.locked_at = None
+                job.worker_id = None
+                job.next_attempt_at = None
+                self._release_product(db, product)
+                db.commit()
+                return WorkerResult(claimed=True)
             except Exception as exc:
                 return self._record_failure(db, job, product, exc)
+            if len(created) < remaining_requested:
+                job.status = "pending"
+                job.completed_at = None
+                job.error_message = None
+                job.next_attempt_at = None
+                job.locked_at = None
+                job.worker_id = None
+                self._release_product(db, product)
+                db.commit()
+                logger.info("AI generation job %s has %s creative(s) remaining", job.id, job.requested_count)
+                return WorkerResult(claimed=True)
             job.status = "completed"
             job.completed_at = self.now()
             job.error_message = None
@@ -125,6 +165,13 @@ class AIGenerationWorker:
                 self.sleep(self.poll_seconds)
 
     def _claim_next_job(self, db: Session) -> PinGenerationJob | None:
+        if not lock_pipeline_if_enabled(db):
+            db.rollback()
+            return None
+        if quota_counts(db)["remaining"] <= 0:
+            db.rollback()
+            return None
+        db.commit()
         now = self.now()
         stale_before = now - timedelta(seconds=LEASE_SECONDS)
         # Recover interrupted workers. A lease expiry is intentionally conservative

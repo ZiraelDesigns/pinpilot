@@ -1,5 +1,5 @@
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
 
@@ -21,6 +21,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
 
 from app.database import Base
+
+
+def _utc_naive_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class PinStatus(str, Enum):
@@ -106,6 +110,38 @@ class PinGenerationJob(Base):
     worker_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class AIPipelineControl(Base):
+    """Persistent singleton control for automatic and manual AI generation."""
+
+    __tablename__ = "ai_pipeline_controls"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_naive_now, nullable=False)
+
+
+class AIDailyQuotaSlot(Base):
+    """One atomically reservable successful AI-creative slot for a UTC day."""
+
+    __tablename__ = "ai_daily_quota_slots"
+    __table_args__ = (
+        UniqueConstraint("quota_date", "slot_number", name="uq_ai_quota_date_slot"),
+        Index("ix_ai_quota_date_state", "quota_date", "state"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    quota_date: Mapped[date] = mapped_column(Date, nullable=False)
+    slot_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), default="available", nullable=False)
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pin_generation_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    creative_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pin_creatives.id", ondelete="SET NULL"), nullable=True, unique=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_naive_now, nullable=False)
 
 
 class PinCreative(Base):

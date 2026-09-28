@@ -129,7 +129,7 @@ def test_shortfall_queues_pending_ai_capacity_without_provider_call(monkeypatch)
             assert first.ai_jobs_created == 1
             assert len(pending) == 1
             assert pending[0].product_id == product.id
-            assert pending[0].requested_count == 13
+            assert pending[0].requested_count == 15
 
             rerun = DailyPinScheduler(db).schedule_daily(date(2035, 1, 7))
             assert rerun.prepared == ()

@@ -13,6 +13,11 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import EtsyListing, PinCreative, PinGenerationJob, Product
 from app.models.core import PinCreativeSourceType, PinCreativeStatus, PinCreativeType
+from app.services.ai_pipeline import (
+    reserve_ai_capacity,
+    finish_reservations,
+    release_reservations,
+)
 
 
 class AIContentError(Exception):
@@ -207,8 +212,8 @@ class AIContentService:
             .one_or_none()
         )
 
-        title = (product.title or "").strip()
-        description = (product.description or "").strip()
+        title = ((listing.title if listing else None) or product.title or "").strip()
+        description = ((listing.description if listing else None) or product.description or "").strip()
 
         tags = listing.tags if listing else []
 
@@ -244,6 +249,9 @@ class AIContentService:
         product: Product,
         creative_type: PinCreativeType,
         desired_count: int,
+        *,
+        job_id: int | None = None,
+        force_new: bool = False,
     ) -> list[PinCreative]:
         """
         Generate one or more Pinterest creatives for an Etsy product.
@@ -255,6 +263,31 @@ class AIContentService:
         3. Etsy product destination URL.
         """
 
+        if not force_new:
+            existing_count = self.db.query(PinCreative.id).filter_by(
+                product_id=product.id,
+                creative_type=creative_type.value,
+                source_type=PinCreativeSourceType.AI.value,
+            ).count()
+            desired_count = max(0, desired_count - existing_count)
+        if desired_count <= 0:
+            return []
+        slots = reserve_ai_capacity(self.db, desired_count, job_id=job_id)
+        try:
+            created = self._generate_reserved(product, creative_type, len(slots))
+            finish_reservations(self.db, slots, created)
+            return created
+        except Exception:
+            self.db.rollback()
+            release_reservations(self.db, [slot.id for slot in slots])
+            raise
+
+    def _generate_reserved(
+        self,
+        product: Product,
+        creative_type: PinCreativeType,
+        desired_count: int,
+    ) -> list[PinCreative]:
         context = self.product_context(product)
 
         existing_keys = {
@@ -267,9 +300,6 @@ class AIContentService:
                 source_type=PinCreativeSourceType.AI.value,
             )
         }
-
-        if len(existing_keys) >= desired_count:
-            return []
 
         created: list[PinCreative] = []
         previous_seo = self._previous_ai_seo_context(product.id)
@@ -287,12 +317,13 @@ class AIContentService:
 
                 image_provider = get_image_provider()
 
-            except Exception as exc:
+            except Exception:
                 raise AIContentError(
-                    f"Görsel sağlayıcısı başlatılamadı: {exc}"
-                ) from exc
+                    "Görsel sağlayıcısı başlatılamadı; yapılandırma ayrıntıları gizlendi."
+                ) from None
 
-        for variation in range(1, desired_count + 1):
+        variation = 1
+        while len(created) < desired_count:
             key = self._generation_key(
                 product.id,
                 creative_type.value,
@@ -301,21 +332,31 @@ class AIContentService:
 
             legacy_key = self._legacy_ai_generation_key(product.id, creative_type.value, variation)
             if key in existing_keys or legacy_key in existing_keys:
+                variation += 1
                 continue
 
             # ---------------------------------------------------------
             # 1. Generate Pinterest SEO content with Gemini
             # ---------------------------------------------------------
 
+            try:
+                raw_content = (self.provider or get_ai_provider()).generate_json(
+                    self._prompt(context, creative_type.value, variation, previous_seo)
+                )
+            except Exception as exc:
+                provider_message = str(exc).casefold()
+                if any(marker in provider_message for marker in (
+                    "429", "rate limit", "resource_exhausted", "timeout", "temporar",
+                    "connection", "500", "502", "503", "504",
+                )):
+                    raise AIContentError(
+                        "AI içerik sağlayıcısı geçici olarak kullanılamıyor; ayrıntılar gizlendi."
+                    ) from None
+                raise AIContentError(
+                    "AI içerik sağlayıcısı başarısız oldu; hata ayrıntıları güvenlik için gizlendi."
+                ) from None
             generated = self._parse_generated_json(
-                (self.provider or get_ai_provider()).generate_json(
-                    self._prompt(
-                        context,
-                        creative_type.value,
-                        variation,
-                        previous_seo,
-                    )
-                ),
+                raw_content,
                 context,
                 creative_type.value,
             )
@@ -345,6 +386,7 @@ class AIContentService:
             )
 
             self.db.add(creative)
+            existing_keys.add(key)
 
             # Flush so SQLAlchemy assigns an ID before the image
             # generation process is completed.
@@ -375,16 +417,15 @@ class AIContentService:
                     )
 
                 except Exception as exc:
-                    self.db.rollback()
-
                     raise AIContentError(
-                        f"Pinterest görseli oluşturulamadı: {exc}"
-                    ) from exc
+                        "Pinterest görseli oluşturulamadı; sağlayıcı hatası güvenlik için gizlendi."
+                    ) from None
 
             created.append(creative)
             previous_seo.append(self._seo_context_item(generated.title, generated.seo_metadata))
+            variation += 1
 
-        self.db.commit()
+        self.db.flush()
 
         return created
 
@@ -407,6 +448,7 @@ class AIContentService:
             keywords = list(dict.fromkeys((context.tags or _keywords_from_title(context.title))))[:12]
             if not keywords:
                 keywords = ["etsy product"]
+            seo_metadata = self.mockup_seo_metadata(context, keywords)
             created.append(PinCreative(
                 product=product,
                 creative_type=PinCreativeType.PRODUCT_FOCUS.value,
@@ -416,6 +458,7 @@ class AIContentService:
                     f"Explore product details, materials, and ordering information."
                 ),
                 keywords=keywords,
+                seo_metadata=seo_metadata,
                 call_to_action="View product details",
                 # A canonical Etsy HTTPS URL is already appropriate for future public-image handling.
                 image_path=image_url,
@@ -434,17 +477,48 @@ class AIContentService:
         The scheduler may later claim this job while respecting its daily target.
         Creating this record never calls a text or image provider.
         """
-        # A just-synced Product has not necessarily been committed yet.
-        self.db.flush()
-        existing = self.db.query(PinGenerationJob.id).filter(
-            PinGenerationJob.product_id == product.id,
-            PinGenerationJob.status.in_(("pending", "running")),
-        ).first()
-        if existing:
-            return None
-        job = PinGenerationJob(product_id=product.id, status="pending")
-        self.db.add(job)
-        return job
+        from app.services.ai_pipeline import create_generation_job
+
+        return create_generation_job(self.db, product, 1)
+
+    @staticmethod
+    def mockup_seo_metadata(context: ProductContext, keywords: list[str]) -> dict:
+        """Build grounded Etsy mockup metadata without calling a content provider."""
+        title_terms = _keywords_from_title(context.title)
+        description_terms = _keywords_from_title(context.description or "")
+        clean = list(dict.fromkeys(
+            re.sub(r"\s+", " ", item).strip(" ,.-")
+            for item in [*keywords, *title_terms, *description_terms]
+            if isinstance(item, str) and item.strip()
+        ))
+        primary = (keywords[0] if keywords else context.title.strip().lower()) or "etsy product"
+        secondary = [item for item in clean if item.casefold() != primary.casefold()][:6]
+        product_phrase = re.sub(r"\s+", " ", context.title).strip()
+        description = re.sub(r"\s+", " ", context.description or "").strip()
+        description = re.split(r"(?<=[.!?])\s+", description, maxsplit=1)[0].strip(" .")
+        use_case = re.search(r"\bfor\s+([^,.;!?]{3,64})", context.description or "", re.IGNORECASE)
+        has_gift_signal = "gift" in " ".join([context.title, context.description, *keywords]).casefold()
+        search_intents = ["product_search"]
+        if has_gift_signal:
+            search_intents.append("gift_intent")
+        elif use_case:
+            search_intents.append("use_case_intent")
+        elif any(term in " ".join([context.title, context.description]).casefold()
+                 for term in ("minimal", "modern", "vintage", "botanical", "floral")):
+            search_intents.append("aesthetic_style_intent")
+        return {
+            "primary_keyword": primary,
+            "secondary_keywords": secondary,
+            "long_tail_keywords": [
+                (description if description and primary.casefold() in description.casefold()
+                 else (f"{primary} for {use_case.group(1).strip()}" if use_case
+                       else f"{primary} {product_phrase}")).strip()[:160]
+            ],
+            "audience_keywords": ["gift shoppers", "home and style shoppers"],
+            "use_case_keywords": [use_case.group(1).strip() if use_case else "product inspiration"],
+            "search_intents": search_intents,
+            "creative_angle": "Etsy product mockup and product details",
+        }
 
     @staticmethod
     def _generation_key(

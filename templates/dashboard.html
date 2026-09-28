@@ -101,6 +101,20 @@
           </tbody></table></div></td></tr>{% endfor %}
         </tbody></table></div>{% else %}<p class="unavailable">No experiments have been created.</p>{% endif %}
       </section>
+      <section class="etsy-connection" aria-label="AI Pipeline Control">
+        <h2>AI Pipeline</h2>
+        <p><strong>AI Pipeline: <span id="ai-pipeline-state">{{ 'ON' if pipeline_status.enabled else 'OFF' }}</span></strong></p>
+        <section class="cards" aria-label="AI pipeline status">
+          <article><span>Today's AI generation</span><strong id="ai-quota-used">{{ pipeline_status.generated }}/{{ pipeline_status.limit }}</strong></article>
+          <article><span>Remaining AI capacity</span><strong id="ai-quota-remaining">{{ pipeline_status.remaining }}</strong></article>
+          <article><span>Pending AI jobs</span><strong id="pipeline-pending-jobs">{{ pipeline_status.pending_jobs }}</strong></article>
+          <article><span>Etsy mockup creatives</span><strong id="pipeline-mockup-creatives">{{ pipeline_status.mockup_creatives }}</strong></article>
+          <article><span>AI creatives</span><strong id="pipeline-ai-creatives">{{ pipeline_status.ai_creatives }}</strong></article>
+        </section>
+        <button id="ai-pipeline-toggle" type="button" data-enabled="{{ 'true' if pipeline_status.enabled else 'false' }}">Turn AI pipeline {{ 'OFF' if pipeline_status.enabled else 'ON' }}</button>
+        <p>Etsy mockup'ları günlük 15 AI creative kotasına dahil değildir. Kota, başarılı AI creative üretimlerini UTC gününe göre sayar.</p>
+        <p id="ai-pipeline-toggle-result" class="notice" hidden></p>
+      </section>
       <section class="etsy-connection" aria-label="Daily Pin queue">
         <h2>Bugünün Pin Kuyruğu</h2>
         <section class="cards" aria-label="Daily queue counts">
@@ -110,7 +124,7 @@
           <article><span>AI kaynaklı</span><strong id="ai-scheduled-pins-count">{{ queue_counts.ai }}</strong></article>
           <article><span>Pending AI jobs</span><strong id="pending-ai-jobs-count">{{ queue_counts.pending_ai_jobs }}</strong></article>
         </section>
-        <p>Günlük hedef 15 Pin: 09:00, 12:00, 15:00, 18:00 ve 21:00 saatlerinde üçer Pin planlanır.</p>
+        <p>Bu, yerel Pin planlama hedefidir; AI kotasından ayrıdır. 09:00, 12:00, 15:00, 18:00 ve 21:00 saatlerinde üçer Pin planlanır.</p>
       </section>
       <section class="etsy-connection" aria-label="Generate Pin creatives">
         <h2>AI Generation Jobs</h2>
@@ -175,6 +189,7 @@
     </main>
   </body>
   <script>
+    document.getElementById('ai-pipeline-toggle')?.addEventListener('click', async (event) => { const button = event.currentTarget; const enabled = button.dataset.enabled !== 'true'; button.disabled = true; try { const response = await fetch('/pipeline/toggle', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled})}); const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Pipeline durumunu kaydetme başarısız.'); location.reload(); } catch (error) { const result = document.getElementById('ai-pipeline-toggle-result'); result.hidden = false; result.textContent = error.message; button.disabled = false; } });
     document.getElementById('creative-generate-form')?.addEventListener('submit', async (event) => { event.preventDefault(); const form = event.currentTarget; const result = document.getElementById('creative-generation-result'); const payload = Object.fromEntries(new FormData(form)); payload.product_id = Number(payload.product_id); payload.desired_count = Number(payload.desired_count); const response = await fetch('/creatives/generate', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)}); const data = await response.json(); result.hidden = false; result.textContent = data.message || data.detail || 'İşlem tamamlanamadı.'; if (response.ok && data.created) location.reload(); });
     document.querySelectorAll('.edit-creative').forEach(button => button.addEventListener('click', () => { button.parentElement.querySelector('.creative-edit-form').hidden = false; }));
     document.querySelectorAll('.creative-edit-form').forEach(form => form.addEventListener('submit', async (event) => { event.preventDefault(); const card = form.closest('[data-creative-id]'); const raw = Object.fromEntries(new FormData(form)); raw.keywords = raw.keywords.split(',').map(item => item.trim()).filter(Boolean); const response = await fetch(`/creatives/${card.dataset.creativeId}`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(raw)}); if (response.ok) location.reload(); }));

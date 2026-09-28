@@ -175,3 +175,23 @@ def test_nullable_metrics_persist_null_and_zero_as_distinct_values():
                 assert zero_row.impressions == 0 and zero_row.saves is None and zero_row.outbound_clicks == 0
         finally:
             engine.dispose()
+
+
+def test_pipeline_control_and_quota_tables_install_idempotently_with_default_on():
+    with tempfile.TemporaryDirectory() as directory:
+        engine = create_engine(f"sqlite:///{Path(directory) / 'pipeline.db'}")
+        try:
+            Base.metadata.create_all(bind=engine)
+            upgrade_analytics_schema(engine)
+            upgrade_analytics_schema(engine)
+            with engine.connect() as connection:
+                tables = set(inspect(connection).get_table_names())
+                assert {"ai_pipeline_controls", "ai_daily_quota_slots"} <= tables
+                assert connection.execute(text(
+                    "SELECT enabled FROM ai_pipeline_controls WHERE id=1"
+                )).scalar_one() == 1
+                assert connection.execute(text(
+                    "SELECT COUNT(*) FROM ai_pipeline_controls"
+                )).scalar_one() == 1
+        finally:
+            engine.dispose()

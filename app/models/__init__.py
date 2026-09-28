@@ -1,4 +1,6 @@
 from app.models.core import (
+    AIDailyQuotaSlot,
+    AIPipelineControl,
     AnalyticsSnapshot,
     AnalyticsCollectionRun,
     EtsyAccount,
@@ -25,6 +27,8 @@ from app.models.core import (
 )
 
 __all__ = [
+    "AIDailyQuotaSlot",
+    "AIPipelineControl",
     "AnalyticsSnapshot",
     "AnalyticsCollectionRun",
     "EtsyAccount",

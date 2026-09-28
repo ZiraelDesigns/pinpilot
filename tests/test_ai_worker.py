@@ -43,7 +43,7 @@ def test_successful_worker_uses_mocked_seo_and_image_pipeline(monkeypatch):
     monkeypatch.setattr(settings, "ai_image_provider", "openai")
 
     class ImageProvider:
-        def generate(self, *_args):
+        def generate(self, *_args, **_kwargs):
             return b"png-bytes"
 
     monkeypatch.setattr("app.services.ai_image.get_image_provider", lambda: ImageProvider())
@@ -160,7 +160,7 @@ def test_failed_image_generation_marks_job_failed_without_creating_a_creative(mo
     monkeypatch.setattr(settings, "ai_image_provider", "openai")
 
     class BrokenImageProvider:
-        def generate(self, *_args):
+        def generate(self, *_args, **_kwargs):
             raise RuntimeError("image provider permanently rejected request")
 
     monkeypatch.setattr("app.services.ai_image.get_image_provider", lambda: BrokenImageProvider())

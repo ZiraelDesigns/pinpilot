@@ -9,6 +9,11 @@ from app.database import get_db
 from app.models import PinCreative, Product
 from app.models.core import PinCreativeStatus, PinCreativeType
 from app.services.ai_content import AIContentError, AIContentService
+from app.services.ai_pipeline import (
+    AIDailyQuotaExceededError,
+    AIPipelinePausedError,
+    quota_counts,
+)
 
 router = APIRouter(prefix="/creatives", tags=["creatives"])
 
@@ -32,8 +37,24 @@ def generate(payload: CreativeGenerateRequest, db: Session = Depends(get_db)):
     if not product:
         raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
     try:
-        creatives = AIContentService(db).generate(product, payload.creative_type, payload.desired_count)
-        return {"created": len(creatives), "message": "Yeni creative oluşturuldu." if creatives else "Bu ürün ve tür için istenen creative sayısı zaten mevcut."}
+        creatives = AIContentService(db).generate(
+            product, payload.creative_type, payload.desired_count, force_new=True
+        )
+        counts = quota_counts(db)
+        db.commit()
+        return {
+            "created": len(creatives),
+            "requested": payload.desired_count,
+            "remaining": counts["remaining"],
+            "message": (
+                f"{len(creatives)} AI creative oluşturuldu."
+                if creatives else "Bu ürün ve tür için yeni creative oluşturulmadı."
+            ),
+        }
+    except AIPipelinePausedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AIDailyQuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except AIContentError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
