@@ -306,6 +306,6 @@ def test_dashboard_route_renders_analytics_empty_state_and_date_controls():
         response = client.get("/", params={"period": "custom", "start_date": "2026-08-01", "end_date": "2026-08-31"})
 
     assert response.status_code == 200
-    assert "Pinterest Analytics" in response.text
-    assert "Date range" in response.text
-    assert "No analytics or published Pins are available for this date range." in response.text
+    assert "Pinterest Analizleri" in response.text
+    assert "Tarih aralığı" in response.text
+    assert "Bu tarih aralığında analiz verisi veya yayınlanmış Pin yok." in response.text

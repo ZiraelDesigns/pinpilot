@@ -339,8 +339,8 @@ def test_dashboard_shows_pipeline_state_quota_and_mockup_exclusion():
         db.close()
         response = client.get("/")
         assert response.status_code == 200
-        assert 'id="ai-pipeline-state">ON<' in response.text
+        assert 'id="ai-pipeline-state">AÇIK<' in response.text
         assert 'id="ai-quota-used">0/15<' in response.text
         assert 'id="ai-quota-remaining">15<' in response.text
         assert 'id="pipeline-mockup-creatives">1<' in response.text
-        assert "mockup'ları günlük 15 AI creative kotasına dahil değildir" in response.text
+        assert "mockup kreatifleri günlük 15 AI kreatif kotasına dahil değildir" in response.text

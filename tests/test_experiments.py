@@ -452,8 +452,8 @@ def test_dashboard_renders_frozen_variant_values_null_zero_and_period_scoped_emp
     with TestClient(app) as client:
         html = client.get("/").text
         detail = client.get(f"/experiments/{experiment_id}").json()
-    assert "No analytics data for evaluation" in html
-    assert "Not available" in html and ">0<" in html
+    assert "Değerlendirme için analiz verisi yok" in html
+    assert "Veri yok" in html and ">0<" in html
     assert detail["evaluations"][0]["id"] == evaluation_id
     assert len(detail["evaluations"][0]["variants"]) == 2
 
@@ -583,7 +583,7 @@ def test_dashboard_keeps_analytics_sections_and_shows_empty_experiments():
         response = client.get("/")
 
     assert response.status_code == 200
-    assert "Pin performance summary" in response.text
-    assert "Account performance" in response.text
-    assert "Experiments" in response.text
-    assert "No experiments have been created." in response.text
+    assert "Pin performans özeti" in response.text
+    assert "Hesap performansı" in response.text
+    assert "Deneyler" in response.text
+    assert "Henüz deney oluşturulmadı." in response.text

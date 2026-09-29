@@ -1,189 +1,189 @@
 <!doctype html>
-<html lang="en">
+<html lang="tr">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>PinPilot Dashboard</title>
+    <title>PinPilot Kontrol Paneli</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <main>
       <h1>PinPilot</h1>
-      <p class="subtitle">Local dashboard foundation</p>
-      <section class="cards" aria-label="Dashboard counts">
-        <article><span>Products</span><strong id="products-count">{{ counts.products }}</strong></article>
-        <article><span>Generated pins</span><strong id="generated-pins-count">{{ counts.generated_pins }}</strong></article>
-        <article><span>Scheduled pins</span><strong id="scheduled-pins-count">{{ counts.scheduled_pins }}</strong></article>
-        <article><span>Published pins</span><strong id="published-pins-count">{{ counts.published_pins }}</strong></article>
+      <p class="subtitle">Yerel kontrol paneli</p>
+      <section class="cards" aria-label="Kontrol paneli sayıları">
+        <article><span>Ürünler</span><strong id="products-count">{{ counts.products }}</strong></article>
+        <article><span>Oluşturulan Pinler</span><strong id="generated-pins-count">{{ counts.generated_pins }}</strong></article>
+        <article><span>Planlanan Pinler</span><strong id="scheduled-pins-count">{{ counts.scheduled_pins }}</strong></article>
+        <article><span>Yayınlanan Pinler</span><strong id="published-pins-count">{{ counts.published_pins }}</strong></article>
       </section>
-      <section class="etsy-connection analytics-dashboard" aria-label="Pinterest analytics">
-        <h2>Pinterest Analytics</h2>
-        <p class="subtitle">Yalnızca toplanmış analytics snapshot'ları gösterilir. Pin ve hesap metrikleri ayrı tutulur.</p>
+      <section class="etsy-connection analytics-dashboard" aria-label="Pinterest Analizleri">
+        <h2>Pinterest Analizleri</h2>
+        <p class="subtitle">Yalnızca toplanan analiz anlık görüntüleri gösterilir. Pin ve hesap metrikleri ayrı tutulur.</p>
         {% if analytics_filter_error %}<p class="notice error">{{ analytics_filter_error }}</p>{% endif %}
         <form method="get" action="/" class="analytics-filters">
-          <label>Date range
+          <label>Tarih aralığı
             <select name="period" id="analytics-period">
-              <option value="7" {% if analytics_period == '7' %}selected{% endif %}>Last 7 days</option>
-              <option value="30" {% if analytics_period == '30' %}selected{% endif %}>Last 30 days</option>
-              <option value="90" {% if analytics_period == '90' %}selected{% endif %}>Last 90 days</option>
-              <option value="custom" {% if analytics_period == 'custom' %}selected{% endif %}>Custom range</option>
+              <option value="7" {% if analytics_period == '7' %}selected{% endif %}>Son 7 gün</option>
+              <option value="30" {% if analytics_period == '30' %}selected{% endif %}>Son 30 gün</option>
+              <option value="90" {% if analytics_period == '90' %}selected{% endif %}>Son 90 gün</option>
+              <option value="custom" {% if analytics_period == 'custom' %}selected{% endif %}>Özel tarih aralığı</option>
             </select>
           </label>
-          <label>From <input type="date" name="start_date" value="{{ analytics_start_date }}"></label>
-          <label>To <input type="date" name="end_date" value="{{ analytics_end_date }}"></label>
-          <label>Pinterest account
-            <select name="account_id"><option value="">All accounts</option>{% for account in analytics.accounts %}<option value="{{ account.id }}" {% if analytics_filters.account_id == account.id %}selected{% endif %}>{{ account.account_name }}</option>{% endfor %}</select>
+          <label>Başlangıç <input type="date" name="start_date" value="{{ analytics_start_date }}"></label>
+          <label>Bitiş <input type="date" name="end_date" value="{{ analytics_end_date }}"></label>
+          <label>Pinterest hesabı
+            <select name="account_id"><option value="">Tüm hesaplar</option>{% for account in analytics.accounts %}<option value="{{ account.id }}" {% if analytics_filters.account_id == account.id %}selected{% endif %}>{{ account.account_name }}</option>{% endfor %}</select>
           </label>
-          <label>Product
-            <select name="product_id"><option value="">All products</option>{% for product in analytics.products_filter %}<option value="{{ product.id }}" {% if analytics_filters.product_id == product.id %}selected{% endif %}>{{ product.title }}</option>{% endfor %}</select>
+          <label>Ürün
+            <select name="product_id"><option value="">Tüm ürünler</option>{% for product in analytics.products_filter %}<option value="{{ product.id }}" {% if analytics_filters.product_id == product.id %}selected{% endif %}>{{ product.title }}</option>{% endfor %}</select>
           </label>
-          <label>Creative type
-            <select name="creative_type"><option value="">All types</option>{% for kind in ['product_focus', 'lifestyle', 'problem_solution', 'gift_idea', 'minimalist'] %}<option value="{{ kind }}" {% if analytics_filters.creative_type == kind %}selected{% endif %}>{{ kind | replace('_', ' ') | title }}</option>{% endfor %}</select>
+          <label>Kreatif türü
+            <select name="creative_type"><option value="">Tüm türler</option>{% for kind in ['product_focus', 'lifestyle', 'problem_solution', 'gift_idea', 'minimalist'] %}<option value="{{ kind }}" {% if analytics_filters.creative_type == kind %}selected{% endif %}>{{ {'product_focus': 'Ürün odaklı', 'lifestyle': 'Yaşam tarzı', 'problem_solution': 'Sorun ve çözüm', 'gift_idea': 'Hediye fikri', 'minimalist': 'Minimalist'}[kind] }}</option>{% endfor %}</select>
           </label>
-          <label>Source type
-            <select name="source_type"><option value="">All sources</option>{% for source in ['ai', 'mockup'] %}<option value="{{ source }}" {% if analytics_filters.source_type == source %}selected{% endif %}>{{ source | title }}</option>{% endfor %}</select>
+          <label>Kaynak türü
+            <select name="source_type"><option value="">Tüm kaynaklar</option>{% for source in ['ai', 'mockup'] %}<option value="{{ source }}" {% if analytics_filters.source_type == source %}selected{% endif %}>{{ {'ai': 'AI', 'mockup': 'Mockup'}[source] }}</option>{% endfor %}</select>
           </label>
-          <label>Board
-            <select name="board_id"><option value="">All boards</option>{% for board in analytics.boards_filter %}<option value="{{ board.id }}" {% if analytics_filters.board_id == board.id %}selected{% endif %}>{{ board.name }}</option>{% endfor %}</select>
+          <label>Pano
+            <select name="board_id"><option value="">Tüm panolar</option>{% for board in analytics.boards_filter %}<option value="{{ board.id }}" {% if analytics_filters.board_id == board.id %}selected{% endif %}>{{ board.name }}</option>{% endfor %}</select>
           </label>
-          <button type="submit">Apply filters</button>
+          <button type="submit">Filtreleri uygula</button>
         </form>
         {% if not analytics.has_any_account %}
-          <p class="notice">No Pinterest account is connected and no account records are available.</p>
+          <p class="notice">Bağlı Pinterest hesabı veya kullanılabilir hesap kaydı yok.</p>
         {% elif analytics.snapshot_count == 0 and analytics.account_snapshot_count == 0 %}
-          {% if analytics.publication_count == 0 %}<p class="notice">No analytics or published Pins are available for this date range.</p>
-          {% else %}<p class="notice">No analytics snapshots are available for the selected date range.</p>{% endif %}
+          {% if analytics.publication_count == 0 %}<p class="notice">Bu tarih aralığında analiz verisi veya yayınlanmış Pin yok.</p>
+          {% else %}<p class="notice">Seçilen tarih aralığında analiz verisi yok.</p>{% endif %}
         {% endif %}
-        <h3>Pin performance summary</h3>
-        <section class="cards analytics-kpis" aria-label="Pin analytics KPI summary">
-          {% for key, label in [('impressions', 'Impressions'), ('saves', 'Saves'), ('pin_clicks', 'Pin clicks'), ('outbound_clicks', 'Outbound clicks'), ('engagements', 'Engagements'), ('engagement_rate', 'Engagement rate'), ('pin_click_rate', 'Pin click rate'), ('outbound_click_rate', 'Outbound click rate')] %}
+        <h3>Pin performans özeti</h3>
+        <section class="cards analytics-kpis" aria-label="Pin analiz özeti">
+          {% for key, label in [('impressions', 'Gösterimler'), ('saves', 'Kaydetmeler'), ('pin_clicks', 'Pin tıklamaları'), ('outbound_clicks', 'Dış bağlantı tıklamaları'), ('engagements', 'Etkileşimler'), ('engagement_rate', 'Etkileşim oranı'), ('pin_click_rate', 'Pin tıklama oranı'), ('outbound_click_rate', 'Dış bağlantı tıklama oranı')] %}
             <article><span>{{ label }}</span><strong>{{ analytics.kpis[key] }}</strong></article>
           {% endfor %}
         </section>
-        <h3>Trends over time</h3>
-        <section class="analytics-charts" aria-label="Analytics trends">
-          {% for key, label in [('impressions', 'Impressions over time'), ('outbound_clicks', 'Outbound clicks over time'), ('saves', 'Saves over time')] %}
+        <h3>Zaman içindeki eğilimler</h3>
+        <section class="analytics-charts" aria-label="Zaman içindeki analiz eğilimleri">
+          {% for key, label in [('impressions', 'Gösterimler'), ('outbound_clicks', 'Dış bağlantı tıklamaları'), ('saves', 'Kaydetmeler')] %}
             <article class="analytics-chart"><h4>{{ label }}</h4>
-              {% if analytics.charts[key] %}<ul>{% for point in analytics.charts[key] %}<li><time>{{ point.date }}</time>{% if point.value is none %}<span class="unavailable">Not available</span>{% else %}<span class="chart-track"><span class="chart-bar" style="width: {{ point.width }}%"></span></span><strong>{{ point.value }}</strong>{% endif %}</li>{% endfor %}</ul>
-              {% else %}<p class="unavailable">No data</p>{% endif %}
+              {% if analytics.charts[key] %}<ul>{% for point in analytics.charts[key] %}<li><time>{{ point.date }}</time>{% if point.value is none %}<span class="unavailable">Veri yok</span>{% else %}<span class="chart-track"><span class="chart-bar" style="width: {{ point.width }}%"></span></span><strong>{{ point.value }}</strong>{% endif %}</li>{% endfor %}</ul>
+              {% else %}<p class="unavailable">Veri yok</p>{% endif %}
             </article>
           {% endfor %}
         </section>
-        <h3>Product performance</h3>
-        {% if analytics.products %}<div class="analytics-table-wrap"><table><thead><tr><th>Product</th><th>Pins</th><th>Impressions</th><th>Saves</th><th>Pin clicks</th><th>Outbound clicks</th><th>Engagements</th></tr></thead><tbody>
-          {% for row in analytics.products %}<tr><td>{{ row.product_title }}</td><td>{{ row.pins }}</td><td>{{ row.impressions if row.impressions is not none else 'Not available' }}</td><td>{{ row.saves if row.saves is not none else 'Not available' }}</td><td>{{ row.pin_clicks if row.pin_clicks is not none else 'Not available' }}</td><td>{{ row.outbound_clicks if row.outbound_clicks is not none else 'Not available' }}</td><td>{{ row.engagements if row.engagements is not none else 'Not available' }}</td></tr>{% endfor %}
+        <h3>Ürün performansı</h3>
+        {% if analytics.products %}<div class="analytics-table-wrap"><table><thead><tr><th>Ürün</th><th>Pinler</th><th>Gösterimler</th><th>Kaydetmeler</th><th>Pin tıklamaları</th><th>Dış bağlantı tıklamaları</th><th>Etkileşimler</th></tr></thead><tbody>
+          {% for row in analytics.products %}<tr><td>{{ row.product_title }}</td><td>{{ row.pins }}</td><td>{{ row.impressions if row.impressions is not none else 'Veri yok' }}</td><td>{{ row.saves if row.saves is not none else 'Veri yok' }}</td><td>{{ row.pin_clicks if row.pin_clicks is not none else 'Veri yok' }}</td><td>{{ row.outbound_clicks if row.outbound_clicks is not none else 'Veri yok' }}</td><td>{{ row.engagements if row.engagements is not none else 'Veri yok' }}</td></tr>{% endfor %}
         </tbody></table></div>
-        {% if analytics.product_count > analytics.product_page_size %}<nav class="analytics-pagination" aria-label="Product results pages">
-          {% if analytics.product_page > 1 %}<a href="/?period={{ analytics_period }}&amp;start_date={{ analytics_start_date }}&amp;end_date={{ analytics_end_date }}&amp;account_id={{ analytics_filters.account_id or '' }}&amp;product_id={{ analytics_filters.product_id or '' }}&amp;creative_type={{ analytics_filters.creative_type or '' }}&amp;source_type={{ analytics_filters.source_type or '' }}&amp;board_id={{ analytics_filters.board_id or '' }}&amp;page={{ analytics.product_page - 1 }}">Previous</a>{% endif %}
-          <span>Page {{ analytics.product_page }} of {{ ((analytics.product_count - 1) // analytics.product_page_size) + 1 }}</span>
-          {% if analytics.product_page * analytics.product_page_size < analytics.product_count %}<a href="/?period={{ analytics_period }}&amp;start_date={{ analytics_start_date }}&amp;end_date={{ analytics_end_date }}&amp;account_id={{ analytics_filters.account_id or '' }}&amp;product_id={{ analytics_filters.product_id or '' }}&amp;creative_type={{ analytics_filters.creative_type or '' }}&amp;source_type={{ analytics_filters.source_type or '' }}&amp;board_id={{ analytics_filters.board_id or '' }}&amp;page={{ analytics.product_page + 1 }}">Next</a>{% endif %}
+        {% if analytics.product_count > analytics.product_page_size %}<nav class="analytics-pagination" aria-label="Ürün sonuç sayfaları">
+          {% if analytics.product_page > 1 %}<a href="/?period={{ analytics_period }}&amp;start_date={{ analytics_start_date }}&amp;end_date={{ analytics_end_date }}&amp;account_id={{ analytics_filters.account_id or '' }}&amp;product_id={{ analytics_filters.product_id or '' }}&amp;creative_type={{ analytics_filters.creative_type or '' }}&amp;source_type={{ analytics_filters.source_type or '' }}&amp;board_id={{ analytics_filters.board_id or '' }}&amp;page={{ analytics.product_page - 1 }}">Önceki</a>{% endif %}
+          <span>Sayfa {{ analytics.product_page }} / {{ ((analytics.product_count - 1) // analytics.product_page_size) + 1 }}</span>
+          {% if analytics.product_page * analytics.product_page_size < analytics.product_count %}<a href="/?period={{ analytics_period }}&amp;start_date={{ analytics_start_date }}&amp;end_date={{ analytics_end_date }}&amp;account_id={{ analytics_filters.account_id or '' }}&amp;product_id={{ analytics_filters.product_id or '' }}&amp;creative_type={{ analytics_filters.creative_type or '' }}&amp;source_type={{ analytics_filters.source_type or '' }}&amp;board_id={{ analytics_filters.board_id or '' }}&amp;page={{ analytics.product_page + 1 }}">Sonraki</a>{% endif %}
         </nav>{% endif %}
-        {% else %}<p class="unavailable">No product performance data for these filters.</p>{% endif %}
-        <h3>Creative performance</h3>
+        {% else %}<p class="unavailable">Bu filtreler için ürün performansı verisi yok.</p>{% endif %}
+        <h3>Kreatif performansı</h3>
         <div class="analytics-dimensions">
-          {% for title, rows, key in [('Creative type', analytics.creative_types, 'creative_type'), ('Source type', analytics.sources, 'source_type'), ('Creative angle', analytics.angles, 'creative_angle'), ('Primary keyword', analytics.keywords, 'primary_keyword')] %}
-            <article><h4>{{ title }}</h4>{% if rows %}<div class="analytics-table-wrap"><table><thead><tr><th>{{ title }}</th><th>Pins</th><th>Impressions</th><th>Saves</th><th>Outbound clicks</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row[key] or 'Not available' }}</td><td>{{ row.pins }}</td><td>{{ row.impressions if row.impressions is not none else 'Not available' }}</td><td>{{ row.saves if row.saves is not none else 'Not available' }}</td><td>{{ row.outbound_clicks if row.outbound_clicks is not none else 'Not available' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="unavailable">No data</p>{% endif %}</article>
+          {% for title, rows, key in [('Kreatif türü', analytics.creative_types, 'creative_type'), ('Kaynak türü', analytics.sources, 'source_type'), ('Kreatif açısı', analytics.angles, 'creative_angle'), ('Birincil anahtar kelime', analytics.keywords, 'primary_keyword')] %}
+            <article><h4>{{ title }}</h4>{% if rows %}<div class="analytics-table-wrap"><table><thead><tr><th>{{ title }}</th><th>Pinler</th><th>Gösterimler</th><th>Kaydetmeler</th><th>Dış bağlantı tıklamaları</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row[key] or 'Veri yok' }}</td><td>{{ row.pins }}</td><td>{{ row.impressions if row.impressions is not none else 'Veri yok' }}</td><td>{{ row.saves if row.saves is not none else 'Veri yok' }}</td><td>{{ row.outbound_clicks if row.outbound_clicks is not none else 'Veri yok' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="unavailable">Veri yok</p>{% endif %}</article>
           {% endfor %}
         </div>
-        <h3>Board performance</h3>
-        {% if analytics.boards %}<div class="analytics-table-wrap"><table><thead><tr><th>Board</th><th>Pins</th><th>Impressions</th><th>Saves</th><th>Pin clicks</th><th>Outbound clicks</th></tr></thead><tbody>{% for row in analytics.boards %}<tr><td>{{ row.board_name or 'No board recorded' }}</td><td>{{ row.pins }}</td><td>{{ row.impressions if row.impressions is not none else 'Not available' }}</td><td>{{ row.saves if row.saves is not none else 'Not available' }}</td><td>{{ row.pin_clicks if row.pin_clicks is not none else 'Not available' }}</td><td>{{ row.outbound_clicks if row.outbound_clicks is not none else 'Not available' }}</td></tr>{% endfor %}</tbody></table></div>
-        {% else %}<p class="unavailable">No board performance data for these filters.</p>{% endif %}
-        <h3>Account performance</h3>
-        <p class="subtitle">Account-level metrics are separate from Pin totals.</p>
-        {% if analytics.account_snapshot_count %}<section class="cards" aria-label="Account analytics KPI summary">{% for key, label in [('profile_visits', 'Profile visits'), ('follows', 'Follows'), ('total_audience', 'Total audience'), ('engaged_audience', 'Engaged audience')] %}<article><span>{{ label }}</span><strong>{{ analytics.account_kpis[key] }}</strong></article>{% endfor %}</section>
-        {% else %}<p class="unavailable">Account analytics are not available for this date range.</p>{% endif %}
-        <h3>Experiments</h3>
-        <p class="subtitle">Manual experiment tracking. No winner is selected and no PinPilot content is changed.</p>
-        {% if experiments %}<div class="analytics-table-wrap"><table><thead><tr><th>Experiment</th><th>Status</th><th>Dates</th><th>Evaluation period</th><th>Metric</th><th>Variants</th><th>Assignments</th><th>Published Pins</th><th>Analytics</th></tr></thead><tbody>
-          {% for experiment in experiments %}<tr><td><a href="/experiments/{{ experiment.id }}">{{ experiment.name }}</a></td><td>{{ experiment.status }}</td><td>{{ experiment.start_at or '—' }}{% if experiment.end_at %} – {{ experiment.end_at }}{% endif %}</td><td>{% if experiment.evaluation_period_start %}{{ experiment.evaluation_period_start }} – {{ experiment.evaluation_period_end }}{% else %}Not evaluated{% endif %}</td><td>{{ experiment.evaluation_metric }}</td><td>{{ experiment.variant_count }}</td><td>{{ experiment.assignment_count }}</td><td>{{ experiment.published_sample_count }}</td><td>{% if experiment.analytics_available %}Collected data available{% else %}No analytics data for evaluation{% endif %}</td></tr>
-          <tr><td colspan="9"><div class="analytics-table-wrap"><table><thead><tr><th>Variant</th><th>Assignments</th><th>Published Pins</th><th>Sample size</th><th>{{ experiment.evaluation_metric }}</th><th>Impressions</th><th>Saves</th><th>Outbound clicks</th></tr></thead><tbody>
-            {% for result in experiment.variant_results %}<tr><td>{{ result.variant_name }}</td><td>{{ result.assignment_count }}</td><td>{{ result.published_pin_count }}</td><td>{{ result.sample_size }}</td><td>{% if result.metric_value is not none %}{{ result.metric_value }}{% else %}Not available{% endif %}</td><td>{% if result.impressions is not none %}{{ result.impressions }}{% else %}Not available{% endif %}</td><td>{% if result.saves is not none %}{{ result.saves }}{% else %}Not available{% endif %}</td><td>{% if result.outbound_clicks is not none %}{{ result.outbound_clicks }}{% else %}Not available{% endif %}</td></tr>{% endfor %}
+        <h3>Pano performansı</h3>
+        {% if analytics.boards %}<div class="analytics-table-wrap"><table><thead><tr><th>Pano</th><th>Pinler</th><th>Gösterimler</th><th>Kaydetmeler</th><th>Pin tıklamaları</th><th>Dış bağlantı tıklamaları</th></tr></thead><tbody>{% for row in analytics.boards %}<tr><td>{{ row.board_name or 'Pano bilgisi yok' }}</td><td>{{ row.pins }}</td><td>{{ row.impressions if row.impressions is not none else 'Veri yok' }}</td><td>{{ row.saves if row.saves is not none else 'Veri yok' }}</td><td>{{ row.pin_clicks if row.pin_clicks is not none else 'Veri yok' }}</td><td>{{ row.outbound_clicks if row.outbound_clicks is not none else 'Veri yok' }}</td></tr>{% endfor %}</tbody></table></div>
+        {% else %}<p class="unavailable">Bu filtreler için pano performansı verisi yok.</p>{% endif %}
+        <h3>Hesap performansı</h3>
+        <p class="subtitle">Hesap düzeyindeki metrikler Pin toplamlarından ayrı gösterilir.</p>
+        {% if analytics.account_snapshot_count %}<section class="cards" aria-label="Hesap analiz özeti">{% for key, label in [('profile_visits', 'Profil ziyaretleri'), ('follows', 'Takipçiler'), ('total_audience', 'Toplam kitle'), ('engaged_audience', 'Etkileşimde bulunan kitle')] %}<article><span>{{ label }}</span><strong>{{ analytics.account_kpis[key] }}</strong></article>{% endfor %}</section>
+        {% else %}<p class="unavailable">Bu tarih aralığında hesap analizi verisi yok.</p>{% endif %}
+        <h3>Deneyler</h3>
+        <p class="subtitle">Deneyler elle izlenir. Kazanan seçilmez ve PinPilot içeriği değiştirilmez.</p>
+        {% if experiments %}<div class="analytics-table-wrap"><table><thead><tr><th>Deney</th><th>Durum</th><th>Tarihler</th><th>Değerlendirme dönemi</th><th>Metrik</th><th>Varyantlar</th><th>Atamalar</th><th>Yayınlanan Pinler</th><th>Analiz</th></tr></thead><tbody>
+          {% for experiment in experiments %}<tr><td><a href="/experiments/{{ experiment.id }}">{{ experiment.name }}</a></td><td>{{ {'draft': 'Taslak', 'running': 'Çalışıyor', 'paused': 'Duraklatıldı', 'completed': 'Tamamlandı', 'cancelled': 'İptal edildi'}.get(experiment.status, experiment.status) }}</td><td>{{ experiment.start_at or '—' }}{% if experiment.end_at %} – {{ experiment.end_at }}{% endif %}</td><td>{% if experiment.evaluation_period_start %}{{ experiment.evaluation_period_start }} – {{ experiment.evaluation_period_end }}{% else %}Henüz değerlendirilmedi{% endif %}</td><td>{{ {'impressions': 'Gösterimler', 'saves': 'Kaydetmeler', 'outbound_clicks': 'Dış bağlantı tıklamaları', 'pin_clicks': 'Pin tıklamaları', 'engagements': 'Etkileşimler'}.get(experiment.evaluation_metric, experiment.evaluation_metric) }}</td><td>{{ experiment.variant_count }}</td><td>{{ experiment.assignment_count }}</td><td>{{ experiment.published_sample_count }}</td><td>{% if experiment.analytics_available %}Toplanan veri mevcut{% else %}Değerlendirme için analiz verisi yok{% endif %}</td></tr>
+          <tr><td colspan="9"><div class="analytics-table-wrap"><table><thead><tr><th>Varyant</th><th>Atamalar</th><th>Yayınlanan Pinler</th><th>Örneklem sayısı</th><th>{{ {'impressions': 'Gösterimler', 'saves': 'Kaydetmeler', 'outbound_clicks': 'Dış bağlantı tıklamaları', 'pin_clicks': 'Pin tıklamaları', 'engagements': 'Etkileşimler'}.get(experiment.evaluation_metric, experiment.evaluation_metric) }}</th><th>Gösterimler</th><th>Kaydetmeler</th><th>Dış bağlantı tıklamaları</th></tr></thead><tbody>
+            {% for result in experiment.variant_results %}<tr><td>{{ result.variant_name }}</td><td>{{ result.assignment_count }}</td><td>{{ result.published_pin_count }}</td><td>{{ result.sample_size }}</td><td>{% if result.metric_value is not none %}{{ result.metric_value }}{% else %}Veri yok{% endif %}</td><td>{% if result.impressions is not none %}{{ result.impressions }}{% else %}Veri yok{% endif %}</td><td>{% if result.saves is not none %}{{ result.saves }}{% else %}Veri yok{% endif %}</td><td>{% if result.outbound_clicks is not none %}{{ result.outbound_clicks }}{% else %}Veri yok{% endif %}</td></tr>{% endfor %}
           </tbody></table></div></td></tr>{% endfor %}
-        </tbody></table></div>{% else %}<p class="unavailable">No experiments have been created.</p>{% endif %}
+        </tbody></table></div>{% else %}<p class="unavailable">Henüz deney oluşturulmadı.</p>{% endif %}
       </section>
-      <section class="etsy-connection" aria-label="AI Pipeline Control">
+      <section class="etsy-connection" aria-label="AI Pipeline kontrolü">
         <h2>AI Pipeline</h2>
-        <p><strong>AI Pipeline: <span id="ai-pipeline-state">{{ 'ON' if pipeline_status.enabled else 'OFF' }}</span></strong></p>
-        <section class="cards" aria-label="AI pipeline status">
-          <article><span>Today's AI generation</span><strong id="ai-quota-used">{{ pipeline_status.generated }}/{{ pipeline_status.limit }}</strong></article>
-          <article><span>Remaining AI capacity</span><strong id="ai-quota-remaining">{{ pipeline_status.remaining }}</strong></article>
-          <article><span>Pending AI jobs</span><strong id="pipeline-pending-jobs">{{ pipeline_status.pending_jobs }}</strong></article>
-          <article><span>Etsy mockup creatives</span><strong id="pipeline-mockup-creatives">{{ pipeline_status.mockup_creatives }}</strong></article>
-          <article><span>AI creatives</span><strong id="pipeline-ai-creatives">{{ pipeline_status.ai_creatives }}</strong></article>
+        <p><strong>AI Pipeline: <span id="ai-pipeline-state">{{ 'AÇIK' if pipeline_status.enabled else 'KAPALI' }}</span></strong></p>
+        <section class="cards" aria-label="AI Pipeline durumu">
+          <article><span>Bugünkü AI üretimi</span><strong id="ai-quota-used">{{ pipeline_status.generated }}/{{ pipeline_status.limit }}</strong></article>
+          <article><span>Kalan AI kapasitesi</span><strong id="ai-quota-remaining">{{ pipeline_status.remaining }}</strong></article>
+          <article><span>Bekleyen AI işleri</span><strong id="pipeline-pending-jobs">{{ pipeline_status.pending_jobs }}</strong></article>
+          <article><span>Etsy mockup kreatifleri</span><strong id="pipeline-mockup-creatives">{{ pipeline_status.mockup_creatives }}</strong></article>
+          <article><span>AI kreatifleri</span><strong id="pipeline-ai-creatives">{{ pipeline_status.ai_creatives }}</strong></article>
         </section>
-        <button id="ai-pipeline-toggle" type="button" data-enabled="{{ 'true' if pipeline_status.enabled else 'false' }}">Turn AI pipeline {{ 'OFF' if pipeline_status.enabled else 'ON' }}</button>
-        <p>Etsy mockup'ları günlük 15 AI creative kotasına dahil değildir. Kota, başarılı AI creative üretimlerini UTC gününe göre sayar.</p>
+        <button id="ai-pipeline-toggle" type="button" data-enabled="{{ 'true' if pipeline_status.enabled else 'false' }}">AI Pipeline'ı {{ 'kapat' if pipeline_status.enabled else 'aç' }}</button>
+        <p>Etsy mockup kreatifleri günlük 15 AI kreatif kotasına dahil değildir. Kota, başarılı AI kreatif üretimlerini UTC gününe göre sayar.</p>
         <p id="ai-pipeline-toggle-result" class="notice" hidden></p>
       </section>
-      <section class="etsy-connection" aria-label="Daily Pin queue">
+      <section class="etsy-connection" aria-label="Günlük Pin kuyruğu">
         <h2>Bugünün Pin Kuyruğu</h2>
-        <section class="cards" aria-label="Daily queue counts">
+        <section class="cards" aria-label="Günlük kuyruk sayıları">
           <article><span>Bugün hazırlanan</span><strong id="today-prepared-pins-count">{{ queue_counts.today_prepared }}</strong></article>
-          <article><span>Scheduled</span><strong id="queue-scheduled-pins-count">{{ queue_counts.scheduled }}</strong></article>
+          <article><span>Planlanan</span><strong id="queue-scheduled-pins-count">{{ queue_counts.scheduled }}</strong></article>
           <article><span>Mockup kaynaklı</span><strong id="mockup-scheduled-pins-count">{{ queue_counts.mockup }}</strong></article>
           <article><span>AI kaynaklı</span><strong id="ai-scheduled-pins-count">{{ queue_counts.ai }}</strong></article>
-          <article><span>Pending AI jobs</span><strong id="pending-ai-jobs-count">{{ queue_counts.pending_ai_jobs }}</strong></article>
+          <article><span>Bekleyen AI işleri</span><strong id="pending-ai-jobs-count">{{ queue_counts.pending_ai_jobs }}</strong></article>
         </section>
         <p>Bu, yerel Pin planlama hedefidir; AI kotasından ayrıdır. 09:00, 12:00, 15:00, 18:00 ve 21:00 saatlerinde üçer Pin planlanır.</p>
       </section>
-      <section class="etsy-connection" aria-label="Generate Pin creatives">
-        <h2>AI Generation Jobs</h2>
-        <section class="cards" aria-label="AI generation job counts">
-          <article><span>Pending</span><strong id="ai-jobs-pending-count">{{ ai_job_counts.pending }}</strong></article>
-          <article><span>Processing</span><strong id="ai-jobs-processing-count">{{ ai_job_counts.processing }}</strong></article>
-          <article><span>Completed</span><strong id="ai-jobs-completed-count">{{ ai_job_counts.completed }}</strong></article>
-          <article><span>Failed</span><strong id="ai-jobs-failed-count">{{ ai_job_counts.failed }}</strong></article>
+      <section class="etsy-connection" aria-label="Pin kreatifleri oluştur">
+        <h2>AI üretim işleri</h2>
+        <section class="cards" aria-label="AI üretim işi sayıları">
+          <article><span>Bekleyen</span><strong id="ai-jobs-pending-count">{{ ai_job_counts.pending }}</strong></article>
+          <article><span>İşleniyor</span><strong id="ai-jobs-processing-count">{{ ai_job_counts.processing }}</strong></article>
+          <article><span>Tamamlandı</span><strong id="ai-jobs-completed-count">{{ ai_job_counts.completed }}</strong></article>
+          <article><span>Başarısız</span><strong id="ai-jobs-failed-count">{{ ai_job_counts.failed }}</strong></article>
         </section>
       </section>
-      <section class="etsy-connection" aria-label="Generate Pin creatives">
-        <h2>Generate Pin Ideas</h2>
+      <section class="etsy-connection" aria-label="Pin kreatifleri oluştur">
+        <h2>Pin fikirleri oluştur</h2>
         {% if products %}
           <form id="creative-generate-form">
             <label>Ürün <select name="product_id">{% for product in products %}<option value="{{ product.id }}">{{ product.title }}</option>{% endfor %}</select></label>
-            <label>Creative type <select name="creative_type"><option value="product_focus">Product focus</option><option value="lifestyle">Lifestyle</option><option value="problem_solution">Problem solution</option><option value="gift_idea">Gift idea</option><option value="minimalist">Minimalist</option></select></label>
+            <label>Kreatif türü <select name="creative_type"><option value="product_focus">Ürün odaklı</option><option value="lifestyle">Yaşam tarzı</option><option value="problem_solution">Sorun ve çözüm</option><option value="gift_idea">Hediye fikri</option><option value="minimalist">Minimalist</option></select></label>
             <label>Hedef adet <select name="desired_count">{% for count in range(1, 6) %}<option value="{{ count }}">{{ count }}</option>{% endfor %}</select></label>
-            <button type="submit">Generate Creatives</button>
+            <button type="submit">Kreatif oluştur</button>
           </form>
           <p id="creative-generation-result" class="notice" hidden></p>
-        {% else %}<p>Creative üretmek için önce Etsy listing'lerini eşitleyin veya bir ürün ekleyin.</p>{% endif %}
+        {% else %}<p>Kreatif üretmek için önce Etsy ürün ilanlarını eşitleyin veya bir ürün ekleyin.</p>{% endif %}
         {% if creatives %}
           <div class="creative-list">{% for creative in creatives %}
-            <article class="creative-card creative-{{ creative.source_type }}" data-creative-id="{{ creative.id }}"><p><strong>{{ creative.source_type | upper }}</strong> · {{ creative.creative_type }} · {{ creative.product.title }} · {{ creative.status }}</p>{% if creative.image_path %}<img class="creative-image" src="{{ creative.image_path }}" alt="{{ creative.title }}" loading="lazy">{% endif %}<h3>{{ creative.title }}</h3><p>{{ creative.description }}</p>{% if creative.seo_metadata %}<p><small><strong>Primary keyword:</strong> {{ creative.seo_metadata.primary_keyword }} · <strong>Angle:</strong> {{ creative.seo_metadata.creative_angle }}</small></p>{% endif %}<p><small>{{ creative.keywords | join(', ') }}</small></p><p><em>{{ creative.call_to_action }}</em></p>
+            <article class="creative-card creative-{{ creative.source_type }}" data-creative-id="{{ creative.id }}"><p><strong>{{ {'ai': 'AI', 'mockup': 'MOCKUP'}.get(creative.source_type, creative.source_type | upper) }}</strong> · {{ {'product_focus': 'Ürün odaklı', 'lifestyle': 'Yaşam tarzı', 'problem_solution': 'Sorun ve çözüm', 'gift_idea': 'Hediye fikri', 'minimalist': 'Minimalist'}.get(creative.creative_type, creative.creative_type) }} · {{ creative.product.title }} · {{ {'draft': 'Taslak', 'approved': 'Onaylandı', 'pending': 'Bekleyen', 'processing': 'İşleniyor', 'completed': 'Tamamlandı', 'failed': 'Başarısız', 'rejected': 'Reddedildi'}.get(creative.status, creative.status) }}</p>{% if creative.image_path %}<img class="creative-image" src="{{ creative.image_path }}" alt="{{ creative.title }}" loading="lazy">{% endif %}<h3>{{ creative.title }}</h3><p>{{ creative.description }}</p>{% if creative.seo_metadata %}<p><small><strong>Birincil anahtar kelime:</strong> {{ creative.seo_metadata.primary_keyword }} · <strong>Yaratıcı yaklaşım:</strong> {{ creative.seo_metadata.creative_angle }}</small></p>{% endif %}<p><small>{{ creative.keywords | join(', ') }}</small></p><p><em>{{ creative.call_to_action }}</em></p>
               <form method="post" action="/creatives/{{ creative.id }}/approve"><button type="submit">Onayla</button></form><button class="secondary edit-creative" type="button">Düzenle</button><form method="post" action="/creatives/{{ creative.id }}/delete"><button class="secondary" type="submit">Sil</button></form>
-              <form class="creative-edit-form" hidden><label>Başlık <input name="title" value="{{ creative.title }}"></label><label>Açıklama <textarea name="description">{{ creative.description }}</textarea></label><label>Keywords <input name="keywords" value="{{ creative.keywords | join(', ') }}"></label><label>CTA <input name="call_to_action" value="{{ creative.call_to_action }}"></label><button type="submit">Kaydet</button></form>
+              <form class="creative-edit-form" hidden><label>Başlık <input name="title" value="{{ creative.title }}"></label><label>Açıklama <textarea name="description">{{ creative.description }}</textarea></label><label>Anahtar kelimeler <input name="keywords" value="{{ creative.keywords | join(', ') }}"></label><label>Harekete geçirici mesaj <input name="call_to_action" value="{{ creative.call_to_action }}"></label><button type="submit">Kaydet</button></form>
             </article>{% endfor %}
           </div>
         {% endif %}
       </section>
-      <section class="etsy-connection" aria-label="Pinterest connection">
+      <section class="etsy-connection" aria-label="Pinterest bağlantısı">
         <h2>Pinterest</h2>
         {% if pinterest_message %}<p class="notice success">{{ pinterest_message }}</p>{% endif %}
         {% if pinterest_error %}<p class="notice error">{{ pinterest_error }}</p>{% endif %}
         {% if pinterest_account %}
           <p><strong>Bağlı:</strong> {{ pinterest_account.account_name }}</p>
-          <form method="post" action="/pinterest/boards/sync"><button type="submit">Pinterest board'larını eşitle</button></form>
+          <form method="post" action="/pinterest/boards/sync"><button type="submit">Pinterest panolarını eşitle</button></form>
           <form method="post" action="/pinterest/disconnect"><button class="secondary" type="submit">Pinterest bağlantısını kaldır</button></form>
-          <p><a href="/pinterest/boards">Board API görünümü</a></p>
+          <p><a href="/pinterest/boards">Pano API görünümü</a></p>
           {% if pinterest_boards %}
             <ul class="board-list">{% for board in pinterest_boards %}<li><code>{{ board.board_id }}</code> — {{ board.name }}</li>{% endfor %}</ul>
-          {% else %}<p>Henüz yerel board kaydı yok.</p>{% endif %}
+          {% else %}<p>Henüz yerel pano kaydı yok.</p>{% endif %}
         {% else %}
           <p>Henüz Pinterest Business hesabı bağlı değil.</p>
-          <a class="button" href="/pinterest/connect">Connect Pinterest</a>
+          <a class="button" href="/pinterest/connect">Pinterest'e bağlan</a>
         {% endif %}
       </section>
-      <section class="etsy-connection" aria-label="Etsy connection">
+      <section class="etsy-connection" aria-label="Etsy bağlantısı">
         <h2>Etsy</h2>
         {% if etsy_message %}<p class="notice success">{{ etsy_message }}</p>{% endif %}
         {% if etsy_error %}<p class="notice error">{{ etsy_error }}</p>{% endif %}
         {% if etsy_account %}
           <p><strong>Bağlı:</strong> {{ etsy_account.shop_name }}</p>
-          {% if etsy_sync_run %}<p><small><strong>Son Etsy sync:</strong> {{ etsy_sync_run.finished_at or etsy_sync_run.started_at }} · {{ etsy_sync_run.status }} · {{ etsy_sync_run.processed_listings }} listing · {{ etsy_sync_run.new_products }} yeni · {{ etsy_sync_run.changed_products }} değişen · {{ etsy_sync_run.new_mockup_creatives }} yeni mockup{% if etsy_sync_run.error_message %} · {{ etsy_sync_run.error_message }}{% endif %}</small></p>{% else %}<p><small>Henüz Etsy sync çalışmadı.</small></p>{% endif %}
-          <form method="post" action="/etsy/sync"><button type="submit">Sync Etsy Listings</button></form>
+          {% if etsy_sync_run %}<p><small><strong>Son Etsy eşitlemesi:</strong> {{ etsy_sync_run.finished_at or etsy_sync_run.started_at }} · {{ {'success': 'Başarılı', 'failed': 'Başarısız', 'running': 'Çalışıyor'}.get(etsy_sync_run.status, etsy_sync_run.status) }} · {{ etsy_sync_run.processed_listings }} ürün ilanı · {{ etsy_sync_run.new_products }} yeni · {{ etsy_sync_run.changed_products }} güncellenen · {{ etsy_sync_run.new_mockup_creatives }} yeni mockup{% if etsy_sync_run.error_message %} · {{ etsy_sync_run.error_message }}{% endif %}</small></p>{% else %}<p><small>Henüz Etsy eşitlemesi yapılmadı.</small></p>{% endif %}
+          <form method="post" action="/etsy/sync"><button type="submit">Etsy ilanlarını eşitle</button></form>
           <form method="post" action="/etsy/disconnect"><button class="secondary" type="submit">Etsy bağlantısını kaldır</button></form>
         {% else %}
           <p>Henüz Etsy hesabı bağlı değil.</p>
-          <a class="button" href="/etsy/connect">Connect Etsy</a>
+          <a class="button" href="/etsy/connect">Etsy'ye bağlan</a>
         {% endif %}
       </section>
     </main>
