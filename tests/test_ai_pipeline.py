@@ -356,4 +356,7 @@ def test_dashboard_shows_pipeline_state_quota_and_mockup_exclusion():
         assert 'class="secondary edit-creative"' in response.text
         assert 'id="page-scroll-toggle"' in response.text
         assert "behavior: 'smooth'" in response.text
+        assert "window.addEventListener('scroll', updatePageScrollToggle" in response.text
+        assert "window.addEventListener('resize', updatePageScrollToggle)" in response.text
+        assert "MutationObserver" not in response.text
         assert "generatedCreativesDialog.showModal()" in response.text
