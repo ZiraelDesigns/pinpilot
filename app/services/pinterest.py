@@ -14,16 +14,12 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import PinterestAccount, PinterestBoard, PinterestOAuthCredential, PinterestOAuthState
+from app.services.pinterest_api import PinterestApiClient, PinterestIntegrationError
 
 PINTEREST_AUTHORIZE_URL = "https://www.pinterest.com/oauth/"
 PINTEREST_TOKEN_URL = "https://api.pinterest.com/v5/oauth/token"
-PINTEREST_API_BASE_URL = "https://api.pinterest.com/v5"
 # Explicitly limited to the scopes requested for the planned PinPilot workflow.
-PINTEREST_SCOPES = ("boards:read", "pins:read", "pins:write")
-
-
-class PinterestIntegrationError(Exception):
-    """A safe, user-facing error from Pinterest setup or the upstream API."""
+PINTEREST_SCOPES = ("user_accounts:read", "boards:read", "pins:read", "pins:write")
 
 
 class PinterestConfigurationError(PinterestIntegrationError):
@@ -61,9 +57,13 @@ class PinterestTokenService:
         credential.refresh_token_encrypted = self._fernet.encrypt(refresh_token.encode()).decode()
         credential.expires_at = datetime.utcnow() + timedelta(seconds=int(token_data.get("expires_in", 2592000)))
         refresh_lifetime = token_data.get("refresh_token_expires_in")
-        credential.refresh_expires_at = (
-            datetime.utcnow() + timedelta(seconds=int(refresh_lifetime)) if refresh_lifetime else None
-        )
+        refresh_expires_at = token_data.get("refresh_token_expires_at")
+        if refresh_expires_at:
+            credential.refresh_expires_at = datetime.utcfromtimestamp(float(refresh_expires_at))
+        else:
+            credential.refresh_expires_at = (
+                datetime.utcnow() + timedelta(seconds=int(refresh_lifetime)) if refresh_lifetime else None
+            )
         credential.scopes = token_data.get("scope", " ".join(PINTEREST_SCOPES))
         self.db.add(credential)
         return credential
@@ -153,53 +153,36 @@ class PinterestOAuthService:
 
 
 class PinterestApiService:
-    """Only GET requests are available. Pin creation/publishing is intentionally absent."""
+    """Compatibility facade over the injectable, provider-neutral HTTP adapter."""
 
-    def __init__(self, db: Session, account: PinterestAccount, access_token: str | None = None):
+    def __init__(
+        self,
+        db: Session,
+        account: PinterestAccount,
+        access_token: str | None = None,
+        *,
+        api_client: PinterestApiClient | None = None,
+    ):
         self.db = db
         self.account = account
         self._access_token = access_token
         self.tokens = PinterestTokenService(db)
+        self.api_client = api_client
 
-    def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        token = self._access_token or self.tokens.access_token(self.account)
-        try:
-            response = httpx.get(
-                f"{PINTEREST_API_BASE_URL}{path}",
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                params=params,
-                timeout=20,
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 429:
-                retry_after = exc.response.headers.get("Retry-After")
-                suffix = f" {retry_after} saniye sonra tekrar deneyin." if retry_after else " Lütfen daha sonra tekrar deneyin."
-                raise PinterestIntegrationError("Pinterest istek sınırına ulaşıldı." + suffix) from exc
-            if exc.response.status_code == 401:
-                raise PinterestIntegrationError("Pinterest yetkilendirmesi geçersiz. Lütfen hesabı yeniden bağlayın.") from exc
-            if exc.response.status_code == 403:
-                raise PinterestIntegrationError("Pinterest bu işlem için gerekli izni vermedi.") from exc
-            raise PinterestIntegrationError("Pinterest verileri okunamadı. Lütfen daha sonra tekrar deneyin.") from exc
-        except (httpx.HTTPError, ValueError) as exc:
-            raise PinterestIntegrationError("Pinterest'e şu anda ulaşılamıyor. Lütfen daha sonra tekrar deneyin.") from exc
+    def _client(self) -> PinterestApiClient:
+        if self.api_client is None:
+            token = self._access_token or self.tokens.access_token(self.account)
+            self.api_client = PinterestApiClient(token)
+        return self.api_client
 
     def fetch_account(self) -> dict[str, Any]:
-        return self._get("/user_account")
+        return self._client().get_current_user()
 
     def fetch_boards(self) -> list[dict[str, Any]]:
-        boards: list[dict[str, Any]] = []
-        bookmark: str | None = None
-        while True:
-            params: dict[str, Any] = {"page_size": 100}
-            if bookmark:
-                params["bookmark"] = bookmark
-            page = self._get("/boards", params)
-            boards.extend(page.get("items", []))
-            bookmark = page.get("bookmark")
-            if not bookmark:
-                return boards
+        return self._client().list_boards()
+
+    def fetch_board(self, board_id: str) -> dict[str, Any]:
+        return self._client().get_board(board_id)
 
     def sync_boards(self) -> int:
         count = 0

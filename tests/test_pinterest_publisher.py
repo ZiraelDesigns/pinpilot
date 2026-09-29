@@ -6,6 +6,7 @@ from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401 - register every model before creating the isolated test schema.
+from app.config import settings
 from app.database import Base
 from app.models import (
     Pin,
@@ -21,6 +22,7 @@ from app.models.core import PinStatus
 from app.services.daily_pin_scheduler import DailyPinScheduler
 from app.services.pinterest_publisher import (
     DisabledPinterestPinPublishingProvider,
+    PinterestApiPublishingProvider,
     PinterestPinPublishRequest,
     PinterestPinPublishResult,
     PinterestPublishAlreadyInProgress,
@@ -30,6 +32,7 @@ from app.services.pinterest_publisher import (
     PinterestPublishingError,
     PinterestPublishingUnavailable,
 )
+from app.services.pinterest_api import PinterestPinResponse
 
 
 @pytest.fixture
@@ -138,6 +141,57 @@ def test_repeated_publish_call_returns_existing_record_without_provider_retry(db
     assert first.id == second.id
     assert len(provider.requests) == 1
     assert db.scalar(select(PublishedPinterestPin).where(PublishedPinterestPin.pin_id == pin.id)) is not None
+
+
+def test_api_adapter_response_is_persisted_as_published_pin(db, monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_publish_enabled", True)
+    pin = _pin(db)
+    account = _account(db, "api-adapter-business")
+    board = PinterestBoard(account=account, board_id="external-board-7", name="Adapter board")
+    db.add(board)
+    db.commit()
+    calls = []
+
+    class FakeApiClient:
+        def create_pin(self, payload):
+            calls.append(payload)
+            return PinterestPinResponse(
+                id="external-pin-77",
+                created_at="2026-09-29T12:30:00Z",
+                board_id="external-board-7",
+            )
+
+    provider = PinterestApiPublishingProvider(db, api_client_factory=lambda _account: FakeApiClient())
+    published = PinterestPublisher(db, provider).publish_pin(pin.id, account.id, board.id)
+
+    assert published.external_pin_id == "external-pin-77"
+    assert published.pin_id == pin.id
+    assert published.account_id == account.id
+    assert published.board_id == board.id
+    assert published.published_at.isoformat() == "2026-09-29T12:30:00"
+    assert calls[0].board_id == "external-board-7"
+    assert calls[0].media_source.url == "https://media.example.test/pin.png"
+    assert calls[0].media_source.source_type == "image_url"
+
+
+def test_api_publisher_requires_board_before_creating_intent_or_calling_api(db, monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_publish_enabled", True)
+    pin = _pin(db)
+    account = _account(db, "board-required-business")
+    provider = PinterestApiPublishingProvider(db, api_client_factory=lambda _account: pytest.fail("must not call API"))
+
+    with pytest.raises(PinterestPublishRejected, match="requires a board"):
+        PinterestPublisher(db, provider).publish_pin(pin.id, account.id)
+
+    assert db.query(PinterestPublishIntent).count() == 0
+
+
+def test_api_publishing_provider_is_disabled_by_default(db, monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_publish_enabled", False)
+    provider = PinterestApiPublishingProvider(db, api_client_factory=lambda _account: pytest.fail("must not call API"))
+    assert provider.publishing_enabled is False
+    with pytest.raises(PinterestPublishingUnavailable):
+        provider.publish_pin(_account(db, "disabled-api-business"), None)
 
 
 def test_confirmed_rejection_preserves_local_scheduled_state_and_retry_reuses_key(db):

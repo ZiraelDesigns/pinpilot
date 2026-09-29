@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     pinterest_redirect_uri: str | None = None
     # A separate Fernet key keeps Pinterest OAuth credentials encrypted at rest.
     pinterest_token_encryption_key: str | None = None
+    # Keep publishing explicitly disabled until a separately approved activation.
+    pinterest_publish_enabled: bool = False
+    # Set to https://api-sandbox.pinterest.com/v5 to use Pinterest Sandbox.
+    pinterest_api_base_url: str = "https://api.pinterest.com/v5"
+    pinterest_api_timeout_seconds: float = 20.0
     # "mock" is the safe default for local development and automated tests.
     ai_provider: str = "mock"
     ai_api_key: str | None = None

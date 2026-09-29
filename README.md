@@ -35,9 +35,11 @@ Pinterest API v5 için OAuth 2.0 Authorization Code akışı kullanılır. `.env
 - `PINTEREST_REDIRECT_URI` (Pinterest uygulama ayarlarında kayıtlı değerle birebir aynı olmalı)
 - `PINTEREST_TOKEN_ENCRYPTION_KEY` (Fernet anahtarı)
 
-Dashboard'dan **Connect Pinterest** seçeneğini kullanın. CSRF koruması için tek kullanımlık OAuth state değeri sunucu tarafında tutulur. Access ve refresh token'ları kaynak koda yazılmaz ve SQLite içinde Fernet ile şifreli saklanır. İstenen izinler yalnızca `boards:read`, `pins:read` ve ileride Pin yayınlama akışı için `pins:write` değerleridir.
+Dashboard'dan **Connect Pinterest** seçeneğini kullanın. CSRF koruması için tek kullanımlık OAuth state değeri sunucu tarafında tutulur. Access ve refresh token'ları kaynak koda yazılmaz ve SQLite içinde Fernet ile şifreli saklanır. İstenen minimum izinler `user_accounts:read`, `boards:read`, `pins:read` ve Pin yayınlama hazırlığı için `pins:write` değerleridir. `boards:write` istenmez.
 
-Bu aşamada Pin oluşturma, yayınlama, güncelleme veya silme endpoint'i yoktur. Uygulama yalnızca bağlı hesap ve board bilgilerini GET istekleriyle okur; board'lar dashboard'da ve `/pinterest/boards` JSON endpoint'inde görüntülenir.
+Pinterest v5 HTTP adapter'ı resmi API hostlarını kullanır; production varsayılandır. İzole Sandbox için `.env` içinde `PINTEREST_API_BASE_URL=https://api-sandbox.pinterest.com/v5` ayarlanabilir. İstemci timeout uygular, hata sınıflarını ayırır ve token/secret değerlerini loglamaz. Create Pin görsel kaynağı `image_url` biçimindedir; yerel oluşturulmuş dosyalar yalnızca `PUBLIC_BASE_URL` üzerinden herkese açık HTTPS URL'ye çevrilir. Yerel dosya yolu veya güvenli olmayan URL reddedilir.
+
+API adapter'ı hesap/board okuma, Pin oluşturma/okuma/güncelleme/silme işlemlerini destekler. `PinterestPublisher` API sağlayıcısı `PINTEREST_PUBLISH_ENABLED=false` varsayılanıyla kapalıdır ve mevcut scheduler/worker'a bağlanmamıştır. Bu nedenle bu aşamada Pin yayınlama otomatik başlamaz. Başarılı bir API Create Pin yanıtındaki dış Pin kimliğini yerel `PublishedPinterestPin` kaydına aktarma işi mevcut idempotent publisher koordinatöründe tamamlanır.
 
 ## AI Pin creative üretimi
 

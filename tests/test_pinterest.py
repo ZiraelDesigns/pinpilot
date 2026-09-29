@@ -1,4 +1,5 @@
 from urllib.parse import parse_qs, urlparse
+from datetime import datetime, timedelta
 
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
@@ -10,6 +11,7 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import PinterestAccount, PinterestBoard
 from app.services.pinterest import PinterestApiService, PinterestIntegrationError, PinterestOAuthService, PinterestTokenService
+from app.services.pinterest_api import PinterestApiClient, PinterestRateLimited
 
 
 def _configure_pinterest(monkeypatch):
@@ -27,7 +29,7 @@ def test_authorization_redirect_uses_state_and_requested_scopes(monkeypatch):
     query = parse_qs(urlparse(response.headers["location"]).query)
     assert response.status_code == 302
     assert response.headers["location"].startswith("https://www.pinterest.com/oauth/")
-    assert query["scope"] == ["boards:read,pins:read,pins:write"]
+    assert query["scope"] == ["user_accounts:read,boards:read,pins:read,pins:write"]
     assert len(query["state"][0]) >= 32
 
 
@@ -50,6 +52,43 @@ def test_token_service_encrypts_pinterest_tokens(monkeypatch):
                 db.delete(account)
             db.commit()
             db.close()
+
+
+def test_token_refresh_uses_existing_encrypted_refresh_credential_and_refresh_expiry(monkeypatch):
+    _configure_pinterest(monkeypatch)
+    requested = {}
+    refresh_expiry = datetime.utcnow() + timedelta(days=55)
+
+    def mocked_refresh(_service, payload):
+        requested.update(payload)
+        return {
+            "access_token": "pina_refreshed_access",
+            "refresh_token": "pinr_rotated_refresh",
+            "expires_in": 2592000,
+            "refresh_token_expires_at": refresh_expiry.timestamp(),
+        }
+
+    monkeypatch.setattr(PinterestOAuthService, "request_token", mocked_refresh)
+    db = SessionLocal()
+    account = PinterestAccount(account_name="Refresh", account_identifier="refresh-test", is_active=True)
+    db.add(account)
+    db.flush()
+    PinterestTokenService(db).save(
+        account,
+        {"access_token": "pina_old_access", "refresh_token": "pinr_old_refresh", "expires_in": 1},
+    )
+    db.commit()
+    try:
+        token = PinterestTokenService(db).access_token(account)
+        assert token == "pina_refreshed_access"
+        assert requested["grant_type"] == "refresh_token"
+        assert requested["refresh_token"] == "pinr_old_refresh"
+        assert account.credential.refresh_expires_at == datetime.utcfromtimestamp(refresh_expiry.timestamp())
+        assert account.credential.refresh_token_encrypted != "pinr_rotated_refresh"
+    finally:
+        db.delete(account)
+        db.commit()
+        db.close()
 
 
 def test_callback_uses_mocked_pinterest_responses_without_network(monkeypatch):
@@ -99,15 +138,13 @@ def test_local_boards_endpoint_returns_board_id_and_name():
 
 
 def test_rate_limit_error_includes_retry_after_without_exposing_token(monkeypatch):
-    response = httpx.Response(
-        429,
-        headers={"Retry-After": "30"},
-        request=httpx.Request("GET", "https://api.pinterest.com/v5/boards"),
-    )
-    monkeypatch.setattr("app.services.pinterest.httpx.get", lambda *args, **kwargs: response)
+    transport = httpx.MockTransport(lambda request: httpx.Response(429, headers={"Retry-After": "30"}))
     db = SessionLocal()
     try:
-        service = PinterestApiService(db, PinterestAccount(account_name="Test"), access_token="never-log-this")
+        api_client = PinterestApiClient(
+            "never-log-this", http_client=httpx.Client(transport=transport)
+        )
+        service = PinterestApiService(db, PinterestAccount(account_name="Test"), api_client=api_client)
         with pytest.raises(PinterestIntegrationError, match="30 saniye"):
             service.fetch_boards()
     finally:

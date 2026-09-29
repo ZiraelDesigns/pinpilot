@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models import (
     Pin,
     PinterestAccount,
@@ -55,6 +56,7 @@ class PinterestPinPublishRequest:
     image_reference: str | None
     destination_url: str | None
     board_external_id: str | None
+    alt_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,96 @@ class DisabledPinterestPinPublishingProvider:
         )
 
 
+class PinterestApiPublishingProvider:
+    """Map PinPilot publish requests to the API v5 adapter.
+
+    It is fail-closed by default. The adapter is only reachable through this
+    provider when PINTEREST_PUBLISH_ENABLED is explicitly enabled; no current
+    scheduler or worker instantiates this class.
+    """
+
+    @property
+    def publishing_enabled(self) -> bool:
+        return settings.pinterest_publish_enabled
+
+    def __init__(self, db: Session, *, api_client_factory=None):
+        self.db = db
+        self.api_client_factory = api_client_factory
+
+    def publish_pin(
+        self,
+        account: PinterestAccount,
+        request: PinterestPinPublishRequest,
+    ) -> PinterestPinPublishResult:
+        if not self.publishing_enabled:
+            raise PinterestPublishingUnavailable(
+                "Pinterest Pin publishing is unavailable until the API integration is approved."
+            )
+        if not request.board_external_id:
+            raise PinterestPublishRejected("Pinterest publishing requires a board selected from this account.")
+
+        from app.services.pinterest import PinterestTokenService
+        from app.services.pinterest_api import (
+            PinterestApiClient,
+            PinterestApiError,
+            PinterestInvalidResponse,
+            PinterestImageUrlError,
+            PinterestRateLimited,
+            PinterestTemporaryError,
+            PinterestCreatePinPayload,
+            pinterest_image_url,
+        )
+
+        try:
+            image_url = pinterest_image_url(request.image_reference)
+            payload = PinterestCreatePinPayload(
+                board_id=request.board_external_id,
+                title=request.title,
+                description=request.description,
+                link=request.destination_url,
+                alt_text=request.alt_text,
+                media_source={"source_type": "image_url", "url": image_url, "is_standard": True},
+            )
+        except (PinterestImageUrlError, ValueError) as exc:
+            raise PinterestPublishRejected(str(exc)) from None
+
+        try:
+            if self.api_client_factory is not None:
+                client = self.api_client_factory(account)
+            else:
+                access_token = PinterestTokenService(self.db).access_token(account)
+                client = PinterestApiClient(access_token)
+            remote_pin = client.create_pin(payload)
+        except PinterestTemporaryError:
+            # A timeout/5xx after POST may occur after Pinterest created the Pin.
+            raise PinterestPublishOutcomeUnknown(
+                "Pinterest may have created the Pin; reconcile before retrying."
+            ) from None
+        except PinterestInvalidResponse:
+            raise PinterestPublishOutcomeUnknown(
+                "Pinterest may have created the Pin but returned an invalid response; reconcile before retrying."
+            ) from None
+        except PinterestRateLimited as exc:
+            # No automatic retry here. The durable intent can be manually retried.
+            retry_after = f" Retry-After: {exc.retry_after}." if exc.retry_after else ""
+            raise PinterestPublishRejected("Pinterest rate limited the publish request." + retry_after) from None
+        except PinterestApiError as exc:
+            raise PinterestPublishRejected(str(exc)) from None
+        except Exception:
+            # Never expose arbitrary client, token, or HTTP exception text.
+            raise PinterestPublishOutcomeUnknown(
+                "Pinterest publish result could not be confirmed; reconcile before retrying."
+            ) from None
+
+        try:
+            published_at = datetime.fromisoformat(remote_pin.created_at.replace("Z", "+00:00"))
+        except (AttributeError, TypeError, ValueError):
+            raise PinterestPublishOutcomeUnknown(
+                "Pinterest may have created the Pin but returned an invalid timestamp; reconcile before retrying."
+            ) from None
+        return PinterestPinPublishResult(external_pin_id=remote_pin.id, published_at=published_at)
+
+
 class PinterestPublisher:
     """Coordinate one durable publication intent and its confirmed result.
 
@@ -127,6 +219,8 @@ class PinterestPublisher:
         board = self.db.get(PinterestBoard, board_id) if board_id is not None else None
         if board_id is not None and (board is None or board.account_id != account.id):
             raise PinterestPublishingError("The selected Pinterest board does not belong to this account.")
+        if isinstance(self.provider, PinterestApiPublishingProvider) and board is None:
+            raise PinterestPublishRejected("Pinterest publishing requires a board selected from this account.")
 
         intent = self.db.scalar(select(PinterestPublishIntent).where(
             PinterestPublishIntent.pin_id == pin.id,
@@ -212,6 +306,7 @@ class PinterestPublisher:
             image_reference=pin.image_path,
             destination_url=pin.destination_url,
             board_external_id=board.board_id if board else None,
+            alt_text=None,
         )
         try:
             result = self.provider.publish_pin(account, request)
