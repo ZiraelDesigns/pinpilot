@@ -16,6 +16,11 @@
         <article><span>Planlanan Pinler</span><strong id="scheduled-pins-count">{{ counts.scheduled_pins }}</strong></article>
         <article><span>Yayınlanan Pinler</span><strong id="published-pins-count">{{ counts.published_pins }}</strong></article>
       </section>
+      <div class="dashboard-actions">
+        <button id="generated-creatives-open" class="generated-open-button" type="button" aria-haspopup="dialog" aria-controls="generated-creatives-dialog">
+          Üretilenler <span class="generated-count">{{ creatives | length }}</span>
+        </button>
+      </div>
       <section class="etsy-connection analytics-dashboard" aria-label="Pinterest Analizleri">
         <h2>Pinterest Analizleri</h2>
         <p class="subtitle">Yalnızca toplanan analiz anlık görüntüleri gösterilir. Pin ve hesap metrikleri ayrı tutulur.</p>
@@ -146,14 +151,6 @@
           </form>
           <p id="creative-generation-result" class="notice" hidden></p>
         {% else %}<p>Kreatif üretmek için önce Etsy ürün ilanlarını eşitleyin veya bir ürün ekleyin.</p>{% endif %}
-        {% if creatives %}
-          <div class="creative-list">{% for creative in creatives %}
-            <article class="creative-card creative-{{ creative.source_type }}" data-creative-id="{{ creative.id }}"><p><strong>{{ {'ai': 'AI', 'mockup': 'MOCKUP'}.get(creative.source_type, creative.source_type | upper) }}</strong> · {{ {'product_focus': 'Ürün odaklı', 'lifestyle': 'Yaşam tarzı', 'problem_solution': 'Sorun ve çözüm', 'gift_idea': 'Hediye fikri', 'minimalist': 'Minimalist'}.get(creative.creative_type, creative.creative_type) }} · {{ creative.product.title }} · {{ {'draft': 'Taslak', 'approved': 'Onaylandı', 'pending': 'Bekleyen', 'processing': 'İşleniyor', 'completed': 'Tamamlandı', 'failed': 'Başarısız', 'rejected': 'Reddedildi'}.get(creative.status, creative.status) }}</p>{% if creative.image_path %}<img class="creative-image" src="{{ creative.image_path }}" alt="{{ creative.title }}" loading="lazy">{% endif %}<h3>{{ creative.title }}</h3><p>{{ creative.description }}</p>{% if creative.seo_metadata %}<p><small><strong>Birincil anahtar kelime:</strong> {{ creative.seo_metadata.primary_keyword }} · <strong>Yaratıcı yaklaşım:</strong> {{ creative.seo_metadata.creative_angle }}</small></p>{% endif %}<p><small>{{ creative.keywords | join(', ') }}</small></p><p><em>{{ creative.call_to_action }}</em></p>
-              <form method="post" action="/creatives/{{ creative.id }}/approve"><button type="submit">Onayla</button></form><button class="secondary edit-creative" type="button">Düzenle</button><form method="post" action="/creatives/{{ creative.id }}/delete"><button class="secondary" type="submit">Sil</button></form>
-              <form class="creative-edit-form" hidden><label>Başlık <input name="title" value="{{ creative.title }}"></label><label>Açıklama <textarea name="description">{{ creative.description }}</textarea></label><label>Anahtar kelimeler <input name="keywords" value="{{ creative.keywords | join(', ') }}"></label><label>Harekete geçirici mesaj <input name="call_to_action" value="{{ creative.call_to_action }}"></label><button type="submit">Kaydet</button></form>
-            </article>{% endfor %}
-          </div>
-        {% endif %}
       </section>
       <section class="etsy-connection" aria-label="Pinterest bağlantısı">
         <h2>Pinterest</h2>
@@ -187,8 +184,58 @@
         {% endif %}
       </section>
     </main>
+    <dialog id="generated-creatives-dialog" class="generated-dialog" aria-labelledby="generated-creatives-title">
+      <section class="generated-panel">
+        <header class="generated-header">
+          <div><p class="subtitle">Görsellerin ve kreatif ayrıntıların</p><h2 id="generated-creatives-title">Üretilenler</h2></div>
+          <button id="generated-creatives-close" class="secondary generated-close" type="button" aria-label="Kapat">×</button>
+        </header>
+        {% if creatives %}
+          <div class="creative-list">{% for creative in creatives %}
+            <article class="creative-card creative-{{ creative.source_type }}" data-creative-id="{{ creative.id }}">
+              <details class="creative-item">
+                <summary>
+                  {% if creative.image_path %}<img class="creative-image" src="{{ creative.image_path }}" alt="{{ creative.title }}" loading="lazy">{% else %}<span class="creative-image-placeholder">Görsel yok</span>{% endif %}
+                  <span class="creative-summary"><strong>{{ creative.title }}</strong><span>{{ creative.product.title }}</span><span>{{ {'ai': 'AI', 'mockup': 'Mockup'}.get(creative.source_type, creative.source_type | upper) }} · {{ {'product_focus': 'Ürün odaklı', 'lifestyle': 'Yaşam tarzı', 'problem_solution': 'Sorun ve çözüm', 'gift_idea': 'Hediye fikri', 'minimalist': 'Minimalist'}.get(creative.creative_type, creative.creative_type) }} · {{ {'draft': 'Taslak', 'approved': 'Onaylandı', 'pending': 'Bekleyen', 'processing': 'İşleniyor', 'completed': 'Tamamlandı', 'failed': 'Başarısız', 'rejected': 'Reddedildi'}.get(creative.status, creative.status) }}</span></span>
+                </summary>
+                <div class="creative-detail">
+                  {% if creative.image_path %}<img class="creative-detail-image" src="{{ creative.image_path }}" alt="{{ creative.title }}" loading="lazy">{% endif %}
+                  <p>{{ creative.description }}</p>
+                  {% if creative.seo_metadata %}<p><small><strong>Birincil anahtar kelime:</strong> {{ creative.seo_metadata.primary_keyword }} · <strong>Yaratıcı yaklaşım:</strong> {{ creative.seo_metadata.creative_angle }}</small></p>{% endif %}
+                  <p><small>{{ creative.keywords | join(', ') }}</small></p><p><em>{{ creative.call_to_action }}</em></p>
+                  <form method="post" action="/creatives/{{ creative.id }}/approve"><button type="submit">Onayla</button></form><button class="secondary edit-creative" type="button">Düzenle</button><form method="post" action="/creatives/{{ creative.id }}/delete"><button class="secondary" type="submit">Sil</button></form>
+                  <form class="creative-edit-form" hidden><label>Başlık <input name="title" value="{{ creative.title }}"></label><label>Açıklama <textarea name="description">{{ creative.description }}</textarea></label><label>Anahtar kelimeler <input name="keywords" value="{{ creative.keywords | join(', ') }}"></label><label>Harekete geçirici mesaj <input name="call_to_action" value="{{ creative.call_to_action }}"></label><button type="submit">Kaydet</button></form>
+                </div>
+              </details>
+            </article>{% endfor %}
+          </div>
+        {% else %}<p class="unavailable generated-empty">Henüz üretilen kreatif yok.</p>{% endif %}
+      </section>
+    </dialog>
+    <button id="page-scroll-toggle" class="page-scroll-toggle" type="button" aria-label="Sayfanın altına git" title="Sayfanın altına git"><span aria-hidden="true">↓</span></button>
   </body>
   <script>
+    const generatedCreativesDialog = document.getElementById('generated-creatives-dialog');
+    document.getElementById('generated-creatives-open')?.addEventListener('click', () => generatedCreativesDialog.showModal());
+    document.getElementById('generated-creatives-close')?.addEventListener('click', () => generatedCreativesDialog.close());
+    generatedCreativesDialog?.addEventListener('click', (event) => { if (event.target === generatedCreativesDialog) generatedCreativesDialog.close(); });
+    const pageScrollToggle = document.getElementById('page-scroll-toggle');
+    const updatePageScrollToggle = () => {
+      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 48;
+      pageScrollToggle.hidden = document.documentElement.scrollHeight <= window.innerHeight + 48;
+      pageScrollToggle.dataset.direction = atBottom ? 'up' : 'down';
+      pageScrollToggle.setAttribute('aria-label', atBottom ? 'Sayfanın üstüne git' : 'Sayfanın altına git');
+      pageScrollToggle.title = atBottom ? 'Sayfanın üstüne git' : 'Sayfanın altına git';
+      pageScrollToggle.querySelector('span').textContent = atBottom ? '↑' : '↓';
+    };
+    pageScrollToggle?.addEventListener('click', () => {
+      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 48;
+      window.scrollTo({top: atBottom ? 0 : document.documentElement.scrollHeight, behavior: 'smooth'});
+    });
+    window.addEventListener('scroll', updatePageScrollToggle, {passive: true});
+    window.addEventListener('resize', updatePageScrollToggle);
+    new MutationObserver(updatePageScrollToggle).observe(document.body, {childList: true, subtree: true});
+    updatePageScrollToggle();
     document.getElementById('ai-pipeline-toggle')?.addEventListener('click', async (event) => { const button = event.currentTarget; const enabled = button.dataset.enabled !== 'true'; button.disabled = true; try { const response = await fetch('/pipeline/toggle', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled})}); const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Pipeline durumunu kaydetme başarısız.'); location.reload(); } catch (error) { const result = document.getElementById('ai-pipeline-toggle-result'); result.hidden = false; result.textContent = error.message; button.disabled = false; } });
     document.getElementById('creative-generate-form')?.addEventListener('submit', async (event) => { event.preventDefault(); const form = event.currentTarget; const result = document.getElementById('creative-generation-result'); const payload = Object.fromEntries(new FormData(form)); payload.product_id = Number(payload.product_id); payload.desired_count = Number(payload.desired_count); const response = await fetch('/creatives/generate', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)}); const data = await response.json(); result.hidden = false; result.textContent = data.message || data.detail || 'İşlem tamamlanamadı.'; if (response.ok && data.created) location.reload(); });
     document.querySelectorAll('.edit-creative').forEach(button => button.addEventListener('click', () => { button.parentElement.querySelector('.creative-edit-form').hidden = false; }));

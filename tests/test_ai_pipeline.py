@@ -330,11 +330,13 @@ def test_dashboard_shows_pipeline_state_quota_and_mockup_exclusion():
     with TestClient(app) as client:
         db = SessionLocal()
         product = _product(db)
-        db.add(PinCreative(
+        creative = PinCreative(
             product_id=product.id, creative_type="product_focus", title="Mockup",
             description="Etsy mockup", keywords=["item"], call_to_action="View",
             source_type="mockup", generation_key="dashboard-mockup-pipeline",
-        ))
+            image_path="/media/dashboard-mockup.jpg",
+        )
+        db.add(creative)
         db.commit()
         db.close()
         response = client.get("/")
@@ -344,3 +346,14 @@ def test_dashboard_shows_pipeline_state_quota_and_mockup_exclusion():
         assert 'id="ai-quota-remaining">15<' in response.text
         assert 'id="pipeline-mockup-creatives">1<' in response.text
         assert "mockup kreatifleri günlük 15 AI kreatif kotasına dahil değildir" in response.text
+        assert 'id="generated-creatives-open"' in response.text
+        assert '<dialog id="generated-creatives-dialog"' in response.text
+        assert 'class="creative-card creative-mockup"' in response.text
+        assert 'src="/media/dashboard-mockup.jpg" alt="Mockup"' in response.text
+        assert 'class="creative-detail-image" src="/media/dashboard-mockup.jpg"' in response.text
+        assert 'action="/creatives/1/approve"' in response.text
+        assert 'action="/creatives/1/delete"' in response.text
+        assert 'class="secondary edit-creative"' in response.text
+        assert 'id="page-scroll-toggle"' in response.text
+        assert "behavior: 'smooth'" in response.text
+        assert "generatedCreativesDialog.showModal()" in response.text
