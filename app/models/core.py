@@ -2,6 +2,7 @@ from copy import deepcopy
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
+from uuid import uuid4
 
 from sqlalchemy import (
     BigInteger,
@@ -33,6 +34,13 @@ class PinStatus(str, Enum):
     SCHEDULED = "scheduled"
     PUBLISHED = "published"
     CANCELLED = "cancelled"
+
+
+class PinterestPublishIntentStatus(str, Enum):
+    PUBLISHING = "publishing"
+    PUBLISHED = "published"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
 
 
 class PinCreativeType(str, Enum):
@@ -92,6 +100,7 @@ class Pin(Base):
     creative: Mapped["PinCreative | None"] = relationship(back_populates="pins")
     analytics: Mapped[list["AnalyticsSnapshot"]] = relationship(back_populates="pin")
     published_pins: Mapped[list["PublishedPinterestPin"]] = relationship(back_populates="pin")
+    publish_intents: Mapped[list["PinterestPublishIntent"]] = relationship(back_populates="pin")
 
 
 class PinGenerationJob(Base):
@@ -192,6 +201,7 @@ class PinterestAccount(Base):
     published_pins: Mapped[list["PublishedPinterestPin"]] = relationship(back_populates="account")
     analytics_runs: Mapped[list["AnalyticsCollectionRun"]] = relationship(back_populates="account")
     analytics_snapshots: Mapped[list["PinterestAccountAnalyticsSnapshot"]] = relationship(back_populates="account")
+    publish_intents: Mapped[list["PinterestPublishIntent"]] = relationship(back_populates="account")
 
 
 class PinterestOAuthCredential(Base):
@@ -235,6 +245,7 @@ class PinterestBoard(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     account: Mapped[PinterestAccount] = relationship(back_populates="boards")
     published_pins: Mapped[list["PublishedPinterestPin"]] = relationship(back_populates="board")
+    publish_intents: Mapped[list["PinterestPublishIntent"]] = relationship(back_populates="board")
 
 
 class EtsyAccount(Base):
@@ -410,6 +421,66 @@ class PublishedPinterestPin(Base):
                 pin.image_path or (creative.image_path or creative.source_image_url if creative else None)
             ),
         }
+
+
+class PinterestPublishIntent(Base):
+    """Durable idempotency claim for publishing one local Pin to one account.
+
+    This is a local coordination record, not evidence that Pinterest has a Pin.
+    Only a provider-confirmed result creates a PublishedPinterestPin.
+    """
+
+    __tablename__ = "pinterest_publish_intents"
+    __table_args__ = (
+        UniqueConstraint(
+            "pin_id",
+            "account_identifier_snapshot",
+            name="uq_pinterest_publish_intents_pin_account_snapshot",
+        ),
+        CheckConstraint(
+            "status IN ('publishing', 'published', 'failed', 'unknown')",
+            name="ck_pinterest_publish_intents_status",
+        ),
+        Index(
+            "ix_pinterest_publish_intents_account_status_created",
+            "account_id",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pin_id: Mapped[int] = mapped_column(
+        ForeignKey("pins.id", ondelete="RESTRICT"), nullable=False
+    )
+    # Keep the intent if a Pinterest account is disconnected, without retaining credentials.
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pinterest_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    account_identifier_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
+    board_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pinterest_boards.id", ondelete="SET NULL"), nullable=True
+    )
+    published_pin_id: Mapped[int | None] = mapped_column(
+        ForeignKey("published_pinterest_pins.id", ondelete="SET NULL"), nullable=True, unique=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(
+        String(64), default=lambda: uuid4().hex, unique=True, nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), default=PinterestPublishIntentStatus.PUBLISHING.value, nullable=False
+    )
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_naive_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utc_naive_now, onupdate=_utc_naive_now, nullable=False
+    )
+
+    pin: Mapped[Pin] = relationship(back_populates="publish_intents")
+    account: Mapped[PinterestAccount | None] = relationship(back_populates="publish_intents")
+    board: Mapped[PinterestBoard | None] = relationship(back_populates="publish_intents")
+    published_pin: Mapped[PublishedPinterestPin | None] = relationship()
 
 
 class AnalyticsCollectionRun(Base):

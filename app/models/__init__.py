@@ -23,6 +23,8 @@ from app.models.core import (
     PinterestBoard,
     PinterestOAuthCredential,
     PinterestOAuthState,
+    PinterestPublishIntent,
+    PinterestPublishIntentStatus,
     Product,
 )
 
@@ -51,5 +53,7 @@ __all__ = [
     "PinterestBoard",
     "PinterestOAuthCredential",
     "PinterestOAuthState",
+    "PinterestPublishIntent",
+    "PinterestPublishIntentStatus",
     "Product",
 ]

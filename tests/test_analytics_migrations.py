@@ -22,6 +22,7 @@ def test_analytics_migration_runs_on_clean_database_and_is_idempotent():
 
             tables = set(inspect(engine).get_table_names())
             assert "published_pinterest_pins" in tables
+            assert "pinterest_publish_intents" in tables
             assert "analytics_collection_runs" in tables
             assert "pinterest_account_analytics_snapshots" in tables
             columns = {column["name"] for column in inspect(engine).get_columns("analytics_snapshots")}
@@ -57,6 +58,7 @@ def test_analytics_migration_preserves_legacy_rows_and_does_not_invent_publicati
             upgrade_analytics_schema(engine)
             upgrade_analytics_schema(engine)
 
+            assert "pinterest_publish_intents" in inspect(engine).get_table_names()
             with engine.connect() as connection:
                 row = connection.execute(text(
                     "SELECT id, pin_id, impressions, saves, outbound_clicks, published_pin_id, "
