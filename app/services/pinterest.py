@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import secrets
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -183,6 +183,21 @@ class PinterestApiService:
 
     def fetch_board(self, board_id: str) -> dict[str, Any]:
         return self._client().get_board(board_id)
+
+    def fetch_pin_analytics(
+        self,
+        pin_id: str,
+        start_date: date,
+        end_date: date,
+    ) -> dict[str, Any]:
+        return self._client().get_pin_analytics(pin_id, start_date, end_date)
+
+    def fetch_account_analytics(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> dict[str, Any]:
+        return self._client().get_user_account_analytics(start_date, end_date)
 
     def sync_boards(self) -> int:
         count = 0

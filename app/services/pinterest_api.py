@@ -12,6 +12,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 from urllib.parse import unquote, urlsplit
 
@@ -212,6 +213,27 @@ class PinterestPinResponse:
     data: dict[str, Any] | None = None
 
 
+# Organic metrics documented for the Pinterest v5 Pin analytics endpoint.
+# Keep this request set explicit so no ad-only or undocumented metric is sent.
+PINTEREST_ORGANIC_PIN_METRICS = (
+    "IMPRESSION",
+    "SAVE",
+    "PIN_CLICK",
+    "OUTBOUND_CLICK",
+    "ENGAGEMENT",
+    "ENGAGEMENT_RATE",
+    "PIN_CLICK_RATE",
+    "OUTBOUND_CLICK_RATE",
+)
+
+PINTEREST_ORGANIC_ACCOUNT_METRICS = (
+    "PROFILE_VISIT",
+    "FOLLOW",
+    "TOTAL_AUDIENCE",
+    "ENGAGED_AUDIENCE",
+)
+
+
 def pinterest_image_url(image_reference: str | None) -> str:
     """Resolve a local generated media path or accept a public HTTPS image URL."""
     if not image_reference:
@@ -409,6 +431,54 @@ class PinterestApiClient:
             data=data,
         )
 
+    def get_pin_analytics(
+        self,
+        pin_id: str,
+        start_date: date,
+        end_date: date,
+        *,
+        metric_types: tuple[str, ...] = PINTEREST_ORGANIC_PIN_METRICS,
+    ) -> dict[str, Any]:
+        """Fetch one Pin's documented organic analytics for a UTC date range.
+
+        Pinterest returns a map keyed by Pin identifier. The detailed response
+        is left as JSON here; the analytics provider validates and normalizes it
+        before it can reach ORM snapshots.
+        """
+        _validate_analytics_dates(start_date, end_date)
+        if not metric_types or any(metric not in PINTEREST_ORGANIC_PIN_METRICS for metric in metric_types):
+            raise PinterestInvalidPayload("Pinterest Pin analytics metric list is invalid.")
+        return self._request(
+            "GET",
+            f"/pins/{_path_id(pin_id)}/analytics",
+            params={
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "metric_types": ",".join(metric_types),
+            },
+        ) or {}
+
+    def get_user_account_analytics(
+        self,
+        start_date: date,
+        end_date: date,
+        *,
+        metric_types: tuple[str, ...] = PINTEREST_ORGANIC_ACCOUNT_METRICS,
+    ) -> dict[str, Any]:
+        """Fetch account analytics for the authenticated Pinterest user."""
+        _validate_analytics_dates(start_date, end_date)
+        if not metric_types or any(metric not in PINTEREST_ORGANIC_ACCOUNT_METRICS for metric in metric_types):
+            raise PinterestInvalidPayload("Pinterest account analytics metric list is invalid.")
+        return self._request(
+            "GET",
+            "/user_account/analytics",
+            params={
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "metric_types": ",".join(metric_types),
+            },
+        ) or {}
+
     def delete_pin(self, pin_id: str) -> None:
         self._request("DELETE", f"/pins/{_path_id(pin_id)}")
 
@@ -433,6 +503,18 @@ def _path_id(value: str) -> str:
     if not value or not value.strip():
         raise ValueError("Pinterest external ID cannot be empty")
     return quote(value.strip(), safe="")
+
+
+def _validate_analytics_dates(start_date: date, end_date: date) -> None:
+    if not isinstance(start_date, date) or isinstance(start_date, datetime):
+        raise PinterestInvalidPayload("Pinterest analytics start_date must be a date.")
+    if not isinstance(end_date, date) or isinstance(end_date, datetime):
+        raise PinterestInvalidPayload("Pinterest analytics end_date must be a date.")
+    if end_date < start_date or (end_date - start_date).days > 90:
+        raise PinterestInvalidPayload("Pinterest analytics date range must be ordered and at most 90 days.")
+    utc_today = datetime.now(timezone.utc).date()
+    if start_date < utc_today - timedelta(days=90):
+        raise PinterestInvalidPayload("Pinterest analytics start_date cannot be more than 90 days old.")
 
 
 def validate_create_payload(data: dict[str, Any]) -> PinterestCreatePinPayload:
