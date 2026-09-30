@@ -30,6 +30,7 @@ from app.models.core import (
     SEOGeneration,
     SEOKeywordIntelligence,
     SEOQualityAssessment,
+    SEOTrendSeasonalAssessment,
     Product,
 )
 
@@ -65,5 +66,6 @@ __all__ = [
     "SEOGeneration",
     "SEOKeywordIntelligence",
     "SEOQualityAssessment",
+    "SEOTrendSeasonalAssessment",
     "Product",
 ]

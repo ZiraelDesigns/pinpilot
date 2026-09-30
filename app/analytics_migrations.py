@@ -19,6 +19,7 @@ from app.models import (
     SEOGeneration,
     SEOKeywordIntelligence,
     SEOQualityAssessment,
+    SEOTrendSeasonalAssessment,
 )
 
 
@@ -346,6 +347,7 @@ def upgrade_analytics_schema(engine: Engine) -> None:
             SEOGeneration.__table__,
             SEOKeywordIntelligence.__table__,
             SEOQualityAssessment.__table__,
+            SEOTrendSeasonalAssessment.__table__,
             PinterestBoardSEOProfile.__table__,
             PinterestBoardRecommendation.__table__,
             AIPipelineControl.__table__,

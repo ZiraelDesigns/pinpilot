@@ -16,6 +16,7 @@ from app.models import (
     SEOGeneration,
     SEOKeywordIntelligence,
     SEOQualityAssessment,
+    SEOTrendSeasonalAssessment,
 )
 import app.models  # noqa: F401 - register all mapped tables before create_all.
 
@@ -36,6 +37,7 @@ def test_analytics_migration_runs_on_clean_database_and_is_idempotent():
             assert "seo_generations" in tables
             assert "seo_keyword_intelligence" in tables
             assert "seo_quality_assessments" in tables
+            assert "seo_trend_seasonal_assessments" in tables
             assert "pinterest_board_seo_profiles" in tables
             assert "pinterest_board_recommendations" in tables
             board_columns = {column["name"] for column in inspect(engine).get_columns("pinterest_boards")}
@@ -100,6 +102,7 @@ def test_keyword_intelligence_schema_upgrade_preserves_legacy_seo_generations():
                 # Migration must not fabricate analysis/provenance for old rows.
                 assert session.query(SEOKeywordIntelligence).count() == 0
                 assert session.query(SEOQualityAssessment).count() == 0
+                assert session.query(SEOTrendSeasonalAssessment).count() == 0
                 assert session.query(PinterestBoardSEOProfile).count() == 0
                 assert session.query(PinterestBoardRecommendation).count() == 0
         finally:

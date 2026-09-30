@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     pinterest_publish_enabled: bool = False
     # Analytics collection remains opt-in until Pinterest access is explicitly approved.
     pinterest_analytics_collection_enabled: bool = False
+    # Optional ISO-3166-1 alpha-2 SEO calendar region; unset means no country assumption.
+    seo_calendar_region: str | None = None
     # Set to https://api-sandbox.pinterest.com/v5 to use Pinterest Sandbox.
     pinterest_api_base_url: str = "https://api.pinterest.com/v5"
     pinterest_api_timeout_seconds: float = 20.0

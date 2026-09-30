@@ -493,6 +493,9 @@ class AIContentService:
             from app.services.board_intelligence import recommend_boards_for_all_accounts
 
             recommend_boards_for_all_accounts(self.db, generation.id)
+            from app.services.trend_seasonal import ensure_trend_seasonal_assessment
+
+            ensure_trend_seasonal_assessment(self.db, generation)
             self._active_generation = None
 
             # ---------------------------------------------------------

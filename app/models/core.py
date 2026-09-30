@@ -226,6 +226,9 @@ class SEOGeneration(Base):
     board_recommendations: Mapped[list["PinterestBoardRecommendation"]] = relationship(
         back_populates="seo_generation", cascade="all, delete-orphan"
     )
+    trend_seasonal_assessments: Mapped[list["SEOTrendSeasonalAssessment"]] = relationship(
+        back_populates="seo_generation", cascade="all, delete-orphan"
+    )
 
 
 class SEOKeywordIntelligence(Base):
@@ -283,6 +286,47 @@ class SEOQualityAssessment(Base):
     validation_result: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
     seo_generation: Mapped[SEOGeneration] = relationship(back_populates="quality_assessment")
+
+
+class SEOTrendSeasonalAssessment(Base):
+    """Versioned calendar-derived and provider-reported context for one SEO generation."""
+
+    __tablename__ = "seo_trend_seasonal_assessments"
+    __table_args__ = (
+        UniqueConstraint(
+            "seo_generation_id", "reference_date", "region_code",
+            "algorithm_version", "calendar_version",
+            name="uq_seo_trend_seasonal_generation_context_version",
+        ),
+        CheckConstraint(
+            "seasonal_score >= 0 AND seasonal_score <= 100",
+            name="ck_seo_trend_seasonal_score",
+        ),
+        Index("ix_seo_trend_seasonal_region_date", "region_code", "reference_date"),
+        Index("ix_seo_trend_seasonal_generation", "seo_generation_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    seo_generation_id: Mapped[int] = mapped_column(
+        ForeignKey("seo_generations.id", ondelete="CASCADE"), nullable=False
+    )
+    reference_date: Mapped[date] = mapped_column(Date, nullable=False)
+    region_code: Mapped[str] = mapped_column(String(16), nullable=False, default="GLOBAL")
+    assessed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    calendar_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="calendar")
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="calendar_derived")
+    calculation_status: Mapped[str] = mapped_column(String(24), nullable=False, default="computed")
+    seasonal_score: Mapped[int] = mapped_column(nullable=False, default=0)
+    score_breakdown: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    calendar_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    keyword_matches: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    recommendations: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    external_trend_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    seo_generation: Mapped[SEOGeneration] = relationship(back_populates="trend_seasonal_assessments")
 
 
 class PinterestAccount(Base):
