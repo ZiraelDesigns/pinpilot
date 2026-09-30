@@ -234,6 +234,59 @@ def test_account_snapshots_are_nullable_and_idempotent_per_run_period():
         db.close()
 
 
+def test_daily_pinterest_snapshot_indexes_prevent_same_entity_date_across_runs():
+    db = SessionLocal()
+    try:
+        account = _account(db)
+        _, _, pin = _local_pin(db)
+        published = PublishedPinterestPin(
+            pin=pin,
+            account=account,
+            external_pin_id="daily-index-pin",
+            published_at=datetime(2026, 9, 1),
+        )
+        first_run = AnalyticsCollectionRun(account=account, status="completed", scope="all")
+        second_run = AnalyticsCollectionRun(account=account, status="completed", scope="all")
+        db.add_all([published, first_run, second_run])
+        db.flush()
+        day = date(2026, 9, 1)
+        bounds = (datetime(2026, 9, 1), datetime(2026, 9, 2))
+        db.add_all([
+            AnalyticsSnapshot(
+                pin=pin, published_pin=published, collection_run=first_run,
+                metric_date=day, period_start=bounds[0], period_end=bounds[1],
+                metric_schema_version="pinterest_v5_organic_daily", impressions=0,
+            ),
+            PinterestAccountAnalyticsSnapshot(
+                account=account, collection_run=first_run, metric_date=day,
+                period_start=bounds[0], period_end=bounds[1],
+                metric_schema_version="pinterest_v5_organic_daily", follows=0,
+            ),
+        ])
+        db.commit()
+
+        db.add_all([
+            AnalyticsSnapshot(
+                pin=pin, published_pin=published, collection_run=second_run,
+                metric_date=day, period_start=bounds[0], period_end=bounds[1],
+                metric_schema_version="pinterest_v5_organic_daily", impressions=4,
+            ),
+            PinterestAccountAnalyticsSnapshot(
+                account=account, collection_run=second_run, metric_date=day,
+                period_start=bounds[0], period_end=bounds[1],
+                metric_schema_version="pinterest_v5_organic_daily", follows=3,
+            ),
+        ])
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+        else:
+            raise AssertionError("Daily Pinterest metrics must be unique per entity and UTC date")
+    finally:
+        db.close()
+
+
 def test_published_metadata_is_an_immutable_copy_of_creative_fields():
     db = SessionLocal()
     try:

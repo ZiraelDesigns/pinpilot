@@ -121,6 +121,12 @@ def test_stage_one_rebuild_preserves_all_values_indexes_and_unique_constraints()
                 assert indexes["ix_analytics_snapshots_published_pin_id_metric_date"]
                 assert indexes["ix_analytics_snapshots_published_period_fetched"]
                 assert indexes["uq_analytics_snapshots_run_pin_period"]["unique"] == 1
+                assert indexes["uq_analytics_snapshots_published_daily_metric"]["unique"] == 1
+                account_indexes = {
+                    index["name"]: index
+                    for index in inspect(connection).get_indexes("pinterest_account_analytics_snapshots")
+                }
+                assert account_indexes["uq_account_analytics_pinterest_daily_metric"]["unique"] == 1
                 foreign_keys = inspect(connection).get_foreign_keys("analytics_snapshots")
                 fk_targets = {foreign_key["referred_table"] for foreign_key in foreign_keys}
                 assert {"pins", "published_pinterest_pins", "analytics_collection_runs"} <= fk_targets

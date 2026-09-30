@@ -55,6 +55,9 @@ def _latest_pin_rows(db: Session, filters: DashboardFilters):
     primary_keyword = func.coalesce(
         metadata["primary_keyword"].as_string(), seo["primary_keyword"].as_string()
     ).label("primary_keyword")
+    creative_title = func.coalesce(
+        metadata["creative_title"].as_string(), Pin.title
+    ).label("creative_title")
     metric_day = _metric_date_expression().label("metric_day")
     row_number = func.row_number().over(
         partition_by=(
@@ -124,6 +127,7 @@ def _latest_pin_rows(db: Session, filters: DashboardFilters):
             source_type,
             creative_angle,
             primary_keyword,
+            creative_title,
             metric_day,
             row_number,
         )
@@ -245,6 +249,37 @@ def get_dashboard_data(db: Session, filters: DashboardFilters) -> dict:
         product_aggregates.limit(filters.page_size).offset((filters.page - 1) * filters.page_size)
     ).mappings().all()
 
+    pin_performance = db.execute(
+        select(
+            PublishedPinterestPin.id.label("published_pin_id"),
+            PublishedPinterestPin.external_pin_id.label("external_pin_id"),
+            rows.c.creative_title.label("pin_title"),
+            Product.title.label("product_title"),
+            PinterestBoard.name.label("board_name"),
+            PublishedPinterestPin.published_at.label("published_at"),
+            func.sum(rows.c.impressions).label("impressions"),
+            func.sum(rows.c.saves).label("saves"),
+            func.sum(rows.c.pin_clicks).label("pin_clicks"),
+            func.sum(rows.c.outbound_clicks).label("outbound_clicks"),
+            func.sum(rows.c.engagements).label("engagements"),
+        )
+        .select_from(rows)
+        .join(PublishedPinterestPin, PublishedPinterestPin.id == rows.c.published_pin_id)
+        .outerjoin(Product, Product.id == rows.c.product_id)
+        .outerjoin(PinterestBoard, PinterestBoard.id == rows.c.board_id)
+        .where(rows.c.row_number == 1)
+        .group_by(
+            PublishedPinterestPin.id,
+            PublishedPinterestPin.external_pin_id,
+            rows.c.creative_title,
+            Product.title,
+            PinterestBoard.name,
+            PublishedPinterestPin.published_at,
+        )
+        .order_by(func.sum(rows.c.impressions).desc().nullslast(), PublishedPinterestPin.published_at.desc())
+        .limit(10)
+    ).mappings().all()
+
     def dimension_rows(*dimensions):
         query = select(
             *dimensions,
@@ -327,6 +362,7 @@ def get_dashboard_data(db: Session, filters: DashboardFilters) -> dict:
     return {
         "kpis": kpis,
         "products": products,
+        "pin_performance": pin_performance,
         "product_count": product_count,
         "product_page": filters.page,
         "product_page_size": filters.page_size,

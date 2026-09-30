@@ -125,6 +125,39 @@ def test_kpi_summary_and_sql_aggregates_are_computed_from_snapshots():
     assert data["publication_count"] == 2
 
 
+def test_pin_performance_lists_real_external_pin_ids_and_aggregates_daily_snapshots():
+    with SessionLocal() as db:
+        _, product, _, _, published = _published(db, title="Top Pin", external_id="pinterest-real-id")
+        _snapshot(db, published, day=date(2026, 9, 19), impressions=11, saves=2)
+        _snapshot(db, published, day=date(2026, 9, 20), impressions=9, saves=3)
+        product_title = product.title
+        db.commit()
+
+        data = get_dashboard_data(db, _filters())
+
+    assert len(data["pin_performance"]) == 1
+    row = data["pin_performance"][0]
+    assert row["external_pin_id"] == "pinterest-real-id"
+    assert row["pin_title"] == "Top Pin creative"
+    assert row["product_title"] == product_title
+    assert row["impressions"] == 20 and row["saves"] == 5
+
+
+def test_pin_performance_is_sorted_by_impressions_and_preserves_null_metrics():
+    with SessionLocal() as db:
+        _, _, _, _, first = _published(db, title="Unavailable", external_id="null-pin")
+        _, _, _, _, second = _published(db, title="Best", external_id="best-pin")
+        _snapshot(db, first, impressions=None, saves=0, clicks=None, outbound=None, engagements=None)
+        _snapshot(db, second, impressions=42, saves=None, clicks=2, outbound=1, engagements=None)
+        db.commit()
+
+        rows = get_dashboard_data(db, _filters())["pin_performance"]
+
+    assert [row["external_pin_id"] for row in rows] == ["best-pin", "null-pin"]
+    assert rows[0]["saves"] is None
+    assert rows[1]["impressions"] is None and rows[1]["saves"] == 0
+
+
 def test_date_filter_limits_kpis_and_chart_rows():
     with SessionLocal() as db:
         _, _, _, _, publication = _published(db)
@@ -309,3 +342,4 @@ def test_dashboard_route_renders_analytics_empty_state_and_date_controls():
     assert "Pinterest Analizleri" in response.text
     assert "Tarih aralığı" in response.text
     assert "Bu tarih aralığında analiz verisi veya yayınlanmış Pin yok." in response.text
+    assert "Pin performansı" in response.text

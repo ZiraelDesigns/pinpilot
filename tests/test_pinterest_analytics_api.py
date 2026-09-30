@@ -149,6 +149,48 @@ def test_provider_preserves_omitted_pin_metrics_as_null():
     assert result.outbound_clicks is None
 
 
+def test_provider_normalizes_daily_pin_metrics_and_keeps_zero_distinct_from_null():
+    body = {"ext-pin": {
+        "summary_metrics": {"IMPRESSION": 999},
+        "daily_metrics": [
+            {"data_status": "READY", "date": "2026-09-06", "metrics": {
+                "IMPRESSION": 0, "SAVE": None, "PIN_CLICK": 2,
+            }},
+            {"data_status": "READY", "date": "2026-09-07", "metrics": {
+                "IMPRESSION": 5, "SAVE": 1,
+            }},
+            {"data_status": "PROCESSING", "date": "2026-09-08", "metrics": {
+                "IMPRESSION": 100,
+            }},
+        ],
+    }}
+    provider = PinterestApiAnalyticsProvider(lambda _: _service(lambda request: httpx.Response(200, json=body)))
+
+    result = provider.fetch_pin_analytics("account", "ext-pin", PERIOD_START, PERIOD_END)
+
+    assert [(row.metric_date, row.impressions, row.saves, row.pin_clicks) for row in result] == [
+        (date(2026, 9, 6), 0, None, 2),
+        (date(2026, 9, 7), 5, 1, None),
+    ]
+
+
+def test_provider_rejects_duplicate_or_out_of_range_daily_pin_rows():
+    duplicated = {"p1": {"daily_metrics": [
+        {"data_status": "READY", "date": "2026-09-02", "metrics": {"IMPRESSION": 1}},
+        {"data_status": "READY", "date": "2026-09-02", "metrics": {"IMPRESSION": 2}},
+    ]}}
+    provider = PinterestApiAnalyticsProvider(lambda _: _service(lambda request: httpx.Response(200, json=duplicated)))
+    with pytest.raises(AnalyticsNormalizationError, match="duplicate daily"):
+        provider.fetch_pin_analytics("account", "p1", PERIOD_START, PERIOD_END)
+
+    outside = {"p1": {"daily_metrics": [
+        {"data_status": "READY", "date": "2026-08-31", "metrics": {"IMPRESSION": 1}},
+    ]}}
+    provider = PinterestApiAnalyticsProvider(lambda _: _service(lambda request: httpx.Response(200, json=outside)))
+    with pytest.raises(AnalyticsNormalizationError, match="outside"):
+        provider.fetch_pin_analytics("account", "p1", PERIOD_START, PERIOD_END)
+
+
 def test_provider_rejects_malformed_metric_values():
     provider = PinterestApiAnalyticsProvider(
         lambda _: _service(lambda request: httpx.Response(
@@ -175,6 +217,21 @@ def test_account_provider_keeps_account_metrics_separate_and_nullable():
     assert result.follows == 3
     assert result.total_audience is None
     assert result.engaged_audience == 1
+
+
+def test_account_provider_normalizes_daily_metric_rows():
+    provider = PinterestApiAnalyticsProvider(lambda _: _service(lambda request: httpx.Response(200, json={
+        "all": {"daily_metrics": [
+            {"data_status": "READY", "date": "2026-09-06", "metrics": {"FOLLOW": 0}},
+            {"data_status": "READY", "date": "2026-09-07", "metrics": {"FOLLOW": 4}},
+        ]}
+    })))
+
+    result = provider.fetch_account_analytics("account", PERIOD_START, PERIOD_END)
+
+    assert [(row.metric_date, row.follows) for row in result] == [
+        (date(2026, 9, 6), 0), (date(2026, 9, 7), 4),
+    ]
 
 
 def test_database_provider_classifies_missing_credentials_without_network_or_secret_output():
@@ -257,6 +314,65 @@ def test_api_provider_collects_into_existing_published_pin_snapshots_without_rea
         assert http_calls == [
             "/v5/pins/external-1/analytics",
             "/v5/user_account/analytics",
+        ]
+    finally:
+        db.close()
+
+
+def test_api_daily_rows_are_persisted_as_distinct_utc_day_snapshots():
+    def handler(request):
+        if "/pins/" in request.url.path:
+            return httpx.Response(200, json={"external-1": {"daily_metrics": [
+                {"data_status": "READY", "date": "2026-09-06", "metrics": {
+                    "IMPRESSION": 0, "SAVE": None,
+                }},
+                {"data_status": "READY", "date": "2026-09-07", "metrics": {
+                    "IMPRESSION": 8, "SAVE": 2,
+                }},
+            ]}})
+        return httpx.Response(200, json={"all": {"daily_metrics": [
+            {"data_status": "READY", "date": "2026-09-06", "metrics": {"FOLLOW": 0}},
+            {"data_status": "READY", "date": "2026-09-07", "metrics": {"FOLLOW": 3}},
+        ]}})
+
+    db = SessionLocal()
+    try:
+        account = PinterestAccount(
+            account_name="Daily API account", account_identifier="daily-account", is_active=True
+        )
+        pin = Pin(
+            product=Product(title="Daily Pin product"), title="Daily Pin", description="Test",
+            status="published", published_at=datetime(2026, 8, 1),
+        )
+        publication = PublishedPinterestPin(
+            pin=pin, account=account, external_pin_id="external-1", published_at=pin.published_at,
+            account_identifier_snapshot=account.account_identifier,
+        )
+        db.add(publication)
+        db.commit()
+        provider = PinterestApiAnalyticsProvider(lambda _: _service(handler))
+        start = datetime(2026, 9, 6)
+        end = datetime(2026, 9, 7, 23, 59, 59)
+
+        first = AnalyticsCollector(db, provider).collect(account.id, start, end)
+        second = AnalyticsCollector(db, provider).collect(account.id, start, end)
+
+        pin_rows = db.query(AnalyticsSnapshot).order_by(AnalyticsSnapshot.metric_date).all()
+        account_rows = db.query(PinterestAccountAnalyticsSnapshot).order_by(
+            PinterestAccountAnalyticsSnapshot.metric_date
+        ).all()
+        assert first.status == second.status == "completed"
+        assert first.run_id != second.run_id
+        assert first.pin_snapshots_written == 2 and second.pin_snapshots_written == 2
+        assert [(row.metric_date, row.period_start, row.period_end, row.impressions, row.saves) for row in pin_rows] == [
+            (date(2026, 9, 6), datetime(2026, 9, 6), datetime(2026, 9, 7), 0, None),
+            (date(2026, 9, 7), datetime(2026, 9, 7), datetime(2026, 9, 8), 8, 2),
+        ]
+        assert len(account_rows) == 2
+        assert {row.collection_run_id for row in pin_rows} == {second.run_id}
+        assert {row.collection_run_id for row in account_rows} == {second.run_id}
+        assert [(row.metric_date, row.follows) for row in account_rows] == [
+            (date(2026, 9, 6), 0), (date(2026, 9, 7), 3),
         ]
     finally:
         db.close()

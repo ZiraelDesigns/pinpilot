@@ -96,6 +96,66 @@ def _summary_metrics(bundle: object) -> dict[str, object]:
     return summary
 
 
+def _daily_metric_rows(
+    bundle: dict[str, object],
+    period_start: datetime,
+    period_end: datetime,
+    metric_fields: dict[str, str],
+    *,
+    external_pin_id: str | None = None,
+) -> tuple[PinAnalyticsDTO | AccountAnalyticsDTO, ...] | None:
+    """Normalize documented daily_metrics rows; None means summary-only response."""
+    if "daily_metrics" not in bundle:
+        return None
+    daily_metrics = bundle["daily_metrics"]
+    if not isinstance(daily_metrics, list):
+        raise AnalyticsNormalizationError("Pinterest daily_metrics is not an array")
+
+    start_date, end_date = _as_utc_date(period_start), _as_utc_date(period_end)
+    result: list[PinAnalyticsDTO | AccountAnalyticsDTO] = []
+    seen_dates: set[date] = set()
+    for row in daily_metrics:
+        if not isinstance(row, dict):
+            raise AnalyticsNormalizationError("Pinterest daily metric row is not an object")
+        # A day is persisted only when Pinterest marks that row ready. Other
+        # statuses mean there is no usable measurement yet, not a zero value.
+        if row.get("data_status") != "READY":
+            continue
+        raw_date = row.get("date")
+        if not isinstance(raw_date, str):
+            raise AnalyticsNormalizationError("Pinterest daily metric date is missing")
+        try:
+            metric_date = date.fromisoformat(raw_date)
+        except ValueError:
+            raise AnalyticsNormalizationError("Pinterest daily metric date is invalid") from None
+        if not start_date <= metric_date <= end_date:
+            raise AnalyticsNormalizationError("Pinterest daily metric date is outside the requested period")
+        if metric_date in seen_dates:
+            raise AnalyticsNormalizationError("Pinterest returned duplicate daily metric dates")
+        seen_dates.add(metric_date)
+        metrics = row.get("metrics")
+        if not isinstance(metrics, dict):
+            raise AnalyticsNormalizationError("Pinterest daily metric values are not an object")
+        values = {
+            field: _metric_value(metrics.get(api_name), field)
+            for api_name, field in metric_fields.items()
+        }
+        if external_pin_id is not None:
+            result.append(PinAnalyticsDTO(
+                external_pin_id=external_pin_id,
+                metric_date=metric_date,
+                **values,
+                metric_schema_version="pinterest_v5_organic_daily",
+            ))
+        else:
+            result.append(AccountAnalyticsDTO(
+                metric_date=metric_date,
+                **values,
+                metric_schema_version="pinterest_v5_organic_daily",
+            ))
+    return tuple(result)
+
+
 def _convert_api_error(error: PinterestApiError) -> Exception:
     if isinstance(error, PinterestRateLimited):
         return AnalyticsRateLimitError("Pinterest analytics rate limit was reached")
@@ -143,7 +203,7 @@ class PinterestApiAnalyticsProvider:
         external_pin_id: str,
         period_start: datetime,
         period_end: datetime,
-    ) -> PinAnalyticsDTO:
+    ) -> PinAnalyticsDTO | tuple[PinAnalyticsDTO, ...]:
         start_date, end_date = _as_utc_date(period_start), _as_utc_date(period_end)
         try:
             response = self._service_for_account(account_identifier).fetch_pin_analytics(
@@ -161,7 +221,15 @@ class PinterestApiAnalyticsProvider:
             # Pinterest analytics can omit rows when no requested metric has
             # data. This retains NULL instead of manufacturing zeroes.
             metrics: dict[str, object] = {}
+        elif not isinstance(item, dict):
+            raise AnalyticsNormalizationError("Pinterest Pin analytics item is not an object")
         else:
+            daily_rows = _daily_metric_rows(
+                item, period_start, period_end, _PIN_METRIC_FIELDS,
+                external_pin_id=external_pin_id,
+            )
+            if daily_rows is not None:
+                return daily_rows
             metrics = _summary_metrics(item)
         values = {
             field: _metric_value(metrics.get(api_name), field)
@@ -178,7 +246,7 @@ class PinterestApiAnalyticsProvider:
         account_identifier: str,
         period_start: datetime,
         period_end: datetime,
-    ) -> AccountAnalyticsDTO | None:
+    ) -> AccountAnalyticsDTO | tuple[AccountAnalyticsDTO, ...] | None:
         start_date, end_date = _as_utc_date(period_start), _as_utc_date(period_end)
         try:
             response = self._service_for_account(account_identifier).fetch_account_analytics(start_date, end_date)
@@ -196,6 +264,11 @@ class PinterestApiAnalyticsProvider:
         if not bundles:
             metrics: dict[str, object] = {}
         elif len(bundles) == 1:
+            daily_rows = _daily_metric_rows(
+                bundles[0], period_start, period_end, _ACCOUNT_METRIC_FIELDS
+            )
+            if daily_rows is not None:
+                return daily_rows
             metrics = _summary_metrics(bundles[0])
         else:
             raise AnalyticsNormalizationError("Pinterest account analytics response is ambiguous")

@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
 
@@ -338,6 +339,16 @@ class EtsySyncRun(Base):
 
 class AnalyticsSnapshot(Base):
     __tablename__ = "analytics_snapshots"
+    __table_args__ = (
+        Index(
+            "uq_analytics_snapshots_published_daily_metric",
+            "published_pin_id",
+            "metric_date",
+            unique=True,
+            sqlite_where=text("metric_schema_version = 'pinterest_v5_organic_daily' AND metric_date IS NOT NULL"),
+            postgresql_where=text("metric_schema_version = 'pinterest_v5_organic_daily' AND metric_date IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     pin_id: Mapped[int | None] = mapped_column(ForeignKey("pins.id"))
@@ -513,6 +524,14 @@ class PinterestAccountAnalyticsSnapshot(Base):
     __tablename__ = "pinterest_account_analytics_snapshots"
     __table_args__ = (
         Index("ix_account_analytics_account_metric_date", "account_id", "metric_date"),
+        Index(
+            "uq_account_analytics_pinterest_daily_metric",
+            "account_id",
+            "metric_date",
+            unique=True,
+            sqlite_where=text("metric_schema_version = 'pinterest_v5_organic_daily' AND metric_date IS NOT NULL"),
+            postgresql_where=text("metric_schema_version = 'pinterest_v5_organic_daily' AND metric_date IS NOT NULL"),
+        ),
         Index(
             "uq_account_analytics_run_account_period",
             "collection_run_id",

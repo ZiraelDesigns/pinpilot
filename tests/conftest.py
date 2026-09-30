@@ -16,6 +16,7 @@ TEST_DATABASE = Path(tempfile.gettempdir()) / f"pinpilot-pytest-{os.getpid()}.db
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DATABASE.as_posix()}"
 os.environ["AI_PROVIDER"] = "mock"
 os.environ["AI_IMAGE_PROVIDER"] = "mock"
+os.environ["PINTEREST_ANALYTICS_COLLECTION_ENABLED"] = "false"
 
 from app.database import Base, engine  # noqa: E402
 from app.analytics_migrations import upgrade_analytics_schema  # noqa: E402

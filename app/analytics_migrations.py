@@ -41,6 +41,15 @@ _SNAPSHOT_INDEXES = (
     "ON analytics_snapshots (published_pin_id, period_start, period_end, fetched_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_analytics_snapshots_run_pin_period "
     "ON analytics_snapshots (collection_run_id, published_pin_id, period_start, period_end)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_analytics_snapshots_published_daily_metric "
+    "ON analytics_snapshots (published_pin_id, metric_date) "
+    "WHERE metric_schema_version = 'pinterest_v5_organic_daily' AND metric_date IS NOT NULL",
+)
+
+_ACCOUNT_DAILY_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_account_analytics_pinterest_daily_metric "
+    "ON pinterest_account_analytics_snapshots (account_id, metric_date) "
+    "WHERE metric_schema_version = 'pinterest_v5_organic_daily' AND metric_date IS NOT NULL"
 )
 
 _LEGACY_METRIC_COLUMNS = ("impressions", "saves", "outbound_clicks")
@@ -147,6 +156,9 @@ def upgrade_analytics_schema(engine: Engine) -> None:
             "(SELECT 1 FROM ai_pipeline_controls WHERE id = 1)"
         ))
     table_names = set(inspect(engine).get_table_names())
+    if "pinterest_account_analytics_snapshots" in table_names:
+        with engine.begin() as connection:
+            connection.execute(text(_ACCOUNT_DAILY_INDEX))
     experiment_columns = {
         "experiments": {
             "pinterest_account_id": (

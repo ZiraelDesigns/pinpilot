@@ -1,0 +1,14 @@
+[Unit]
+Description=Collect PinPilot Pinterest analytics snapshots (opt-in)
+After=network-online.target pinpilot.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/pinpilot
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/pinpilot
+ExecStart=/opt/pinpilot/.venv/bin/python /opt/pinpilot/scripts/collect_pinterest_analytics.py
+StandardOutput=journal
+StandardError=journal

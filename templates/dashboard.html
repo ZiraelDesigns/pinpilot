@@ -74,6 +74,11 @@
             </article>
           {% endfor %}
         </section>
+        <h3>Pin performansı</h3>
+        <p class="subtitle">Seçilen tarih aralığındaki en yüksek gösterim sayısına göre ilk 10 yayın.</p>
+        {% if analytics.pin_performance %}<div class="analytics-table-wrap"><table><thead><tr><th>Harici Pin ID</th><th>Pin başlığı</th><th>Ürün</th><th>Pano</th><th>Yayın zamanı</th><th>Gösterimler</th><th>Kaydetmeler</th><th>Pin tıklamaları</th><th>Dış bağlantı tıklamaları</th><th>Etkileşimler</th></tr></thead><tbody>
+          {% for row in analytics.pin_performance %}<tr><td>{{ row.external_pin_id or '—' }}</td><td>{{ row.pin_title or '—' }}</td><td>{{ row.product_title or '—' }}</td><td>{{ row.board_name or 'Pano bilgisi yok' }}</td><td>{{ row.published_at }}</td><td>{{ row.impressions if row.impressions is not none else 'Veri yok' }}</td><td>{{ row.saves if row.saves is not none else 'Veri yok' }}</td><td>{{ row.pin_clicks if row.pin_clicks is not none else 'Veri yok' }}</td><td>{{ row.outbound_clicks if row.outbound_clicks is not none else 'Veri yok' }}</td><td>{{ row.engagements if row.engagements is not none else 'Veri yok' }}</td></tr>{% endfor %}
+        </tbody></table></div>{% else %}<p class="unavailable">Seçilen tarih aralığında Pin performans verisi yok.</p>{% endif %}
         <h3>Ürün performansı</h3>
         {% if analytics.products %}<div class="analytics-table-wrap"><table><thead><tr><th>Ürün</th><th>Pinler</th><th>Gösterimler</th><th>Kaydetmeler</th><th>Pin tıklamaları</th><th>Dış bağlantı tıklamaları</th><th>Etkileşimler</th></tr></thead><tbody>
           {% for row in analytics.products %}<tr><td>{{ row.product_title }}</td><td>{{ row.pins }}</td><td>{{ row.impressions if row.impressions is not none else 'Veri yok' }}</td><td>{{ row.saves if row.saves is not none else 'Veri yok' }}</td><td>{{ row.pin_clicks if row.pin_clicks is not none else 'Veri yok' }}</td><td>{{ row.outbound_clicks if row.outbound_clicks is not none else 'Veri yok' }}</td><td>{{ row.engagements if row.engagements is not none else 'Veri yok' }}</td></tr>{% endfor %}

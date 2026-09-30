@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh PinPilot Pinterest analytics snapshots daily (opt-in)
+
+[Timer]
+OnCalendar=*-*-* 04:10:00 UTC
+Persistent=true
+AccuracySec=5min
+Unit=pinpilot-analytics-collection.service
+
+[Install]
+WantedBy=timers.target

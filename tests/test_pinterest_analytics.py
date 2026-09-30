@@ -145,7 +145,8 @@ def test_successful_pin_and_account_collection_persists_normalized_dtos():
         assert snapshot.outbound_clicks == 4 and snapshot.engagements == 19
         assert snapshot.engagement_rate == Decimal("0.188118")
         assert snapshot.metric_date == METRIC_DATE
-        assert snapshot.period_start == PERIOD_START and snapshot.period_end == PERIOD_END
+        assert snapshot.period_start == datetime(2026, 9, 7)
+        assert snapshot.period_end == datetime(2026, 9, 8)
         assert account_snapshot.profile_visits == 23 and account_snapshot.follows == 5
         assert account_snapshot.total_audience == 200 and account_snapshot.engaged_audience == 31
     finally:

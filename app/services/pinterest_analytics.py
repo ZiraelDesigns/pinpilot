@@ -7,7 +7,7 @@ public account/Pin identifiers only; OAuth credentials are not part of its inter
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
@@ -85,14 +85,14 @@ class PinterestAnalyticsProvider(Protocol):
         external_pin_id: str,
         period_start: datetime,
         period_end: datetime,
-    ) -> PinAnalyticsDTO: ...
+    ) -> PinAnalyticsDTO | tuple[PinAnalyticsDTO, ...]: ...
 
     def fetch_account_analytics(
         self,
         account_identifier: str,
         period_start: datetime,
         period_end: datetime,
-    ) -> AccountAnalyticsDTO | None: ...
+    ) -> AccountAnalyticsDTO | tuple[AccountAnalyticsDTO, ...] | None: ...
 
 
 @dataclass(frozen=True)
@@ -276,9 +276,27 @@ class AnalyticsCollector:
                             period_start,
                             period_end,
                         )
-                        metrics = normalize_pin_analytics(response, publication.external_pin_id)
-                        self._upsert_pin_snapshot(run, publication, metrics, period_start, period_end, now)
-                        snapshots_written += 1
+                        metric_rows = _as_tuple(response)
+                        if not metric_rows:
+                            skipped_pins += 1
+                            continue
+                        for metric_row in metric_rows:
+                            metrics = normalize_pin_analytics(metric_row, publication.external_pin_id)
+                            if metrics.metric_date is None:
+                                snapshot_start, snapshot_end = period_start, period_end
+                            else:
+                                requested_start = _utc_date(period_start)
+                                requested_end = _utc_date(period_end)
+                                if not requested_start <= metrics.metric_date <= requested_end:
+                                    raise AnalyticsNormalizationError(
+                                        "provider returned a metric date outside the requested period"
+                                    )
+                                snapshot_start = datetime.combine(metrics.metric_date, time.min)
+                                snapshot_end = snapshot_start + timedelta(days=1)
+                            self._upsert_pin_snapshot(
+                                run, publication, metrics, snapshot_start, snapshot_end, now
+                            )
+                            snapshots_written += 1
                     except Exception as exc:
                         failures.append(AnalyticsCollectionFailure(
                             "pin", str(publication.id), _failure_category(exc)
@@ -291,10 +309,21 @@ class AnalyticsCollector:
                         period_start,
                         period_end,
                     )
-                    if response is not None:
-                        metrics = normalize_account_analytics(response)
+                    for metric_row in _as_tuple(response):
+                        metrics = normalize_account_analytics(metric_row)
+                        if metrics.metric_date is None:
+                            snapshot_start, snapshot_end = period_start, period_end
+                        else:
+                            requested_start = _utc_date(period_start)
+                            requested_end = _utc_date(period_end)
+                            if not requested_start <= metrics.metric_date <= requested_end:
+                                raise AnalyticsNormalizationError(
+                                    "provider returned an account metric date outside the requested period"
+                                )
+                            snapshot_start = datetime.combine(metrics.metric_date, time.min)
+                            snapshot_end = snapshot_start + timedelta(days=1)
                         self._upsert_account_snapshot(
-                            run, account, metrics, period_start, period_end, now
+                            run, account, metrics, snapshot_start, snapshot_end, now
                         )
                         account_snapshot_written = True
                 except Exception as exc:
@@ -343,14 +372,23 @@ class AnalyticsCollector:
         period_end: datetime,
         fetched_at: datetime,
     ) -> None:
-        snapshot = self.db.scalar(
-            select(AnalyticsSnapshot).where(
+        if metrics.metric_schema_version == "pinterest_v5_organic_daily" and metrics.metric_date:
+            # Daily Pinterest observations have one canonical row per published
+            # Pin and UTC date; a later collection refreshes that row instead of
+            # adding a second copy of the same day.
+            snapshot_query = select(AnalyticsSnapshot).where(
+                AnalyticsSnapshot.published_pin_id == publication.id,
+                AnalyticsSnapshot.metric_date == metrics.metric_date,
+                AnalyticsSnapshot.metric_schema_version == "pinterest_v5_organic_daily",
+            )
+        else:
+            snapshot_query = select(AnalyticsSnapshot).where(
                 AnalyticsSnapshot.collection_run_id == run.id,
                 AnalyticsSnapshot.published_pin_id == publication.id,
                 AnalyticsSnapshot.period_start == period_start,
                 AnalyticsSnapshot.period_end == period_end,
             )
-        )
+        snapshot = self.db.scalar(snapshot_query)
         if snapshot is None:
             snapshot = AnalyticsSnapshot(
                 collection_run_id=run.id,
@@ -360,6 +398,9 @@ class AnalyticsCollector:
                 period_end=period_end,
             )
             self.db.add(snapshot)
+        snapshot.collection_run_id = run.id
+        snapshot.period_start = period_start
+        snapshot.period_end = period_end
         snapshot.metric_date = metrics.metric_date
         snapshot.fetched_at = fetched_at
         snapshot.recorded_at = fetched_at
@@ -382,14 +423,20 @@ class AnalyticsCollector:
         period_end: datetime,
         fetched_at: datetime,
     ) -> None:
-        snapshot = self.db.scalar(
-            select(PinterestAccountAnalyticsSnapshot).where(
+        if metrics.metric_schema_version == "pinterest_v5_organic_daily" and metrics.metric_date:
+            snapshot_query = select(PinterestAccountAnalyticsSnapshot).where(
+                PinterestAccountAnalyticsSnapshot.account_id == account.id,
+                PinterestAccountAnalyticsSnapshot.metric_date == metrics.metric_date,
+                PinterestAccountAnalyticsSnapshot.metric_schema_version == "pinterest_v5_organic_daily",
+            )
+        else:
+            snapshot_query = select(PinterestAccountAnalyticsSnapshot).where(
                 PinterestAccountAnalyticsSnapshot.collection_run_id == run.id,
                 PinterestAccountAnalyticsSnapshot.account_id == account.id,
                 PinterestAccountAnalyticsSnapshot.period_start == period_start,
                 PinterestAccountAnalyticsSnapshot.period_end == period_end,
             )
-        )
+        snapshot = self.db.scalar(snapshot_query)
         if snapshot is None:
             snapshot = PinterestAccountAnalyticsSnapshot(
                 collection_run_id=run.id,
@@ -398,6 +445,9 @@ class AnalyticsCollector:
                 period_end=period_end,
             )
             self.db.add(snapshot)
+        snapshot.collection_run_id = run.id
+        snapshot.period_start = period_start
+        snapshot.period_end = period_end
         snapshot.metric_date = metrics.metric_date
         snapshot.fetched_at = fetched_at
         snapshot.profile_visits = metrics.profile_visits
@@ -405,3 +455,19 @@ class AnalyticsCollector:
         snapshot.total_audience = metrics.total_audience
         snapshot.engaged_audience = metrics.engaged_audience
         snapshot.metric_schema_version = metrics.metric_schema_version
+
+
+def _as_tuple(value):
+    """Accept existing single-row providers and daily-series providers alike."""
+    if value is None:
+        return ()
+    return value if isinstance(value, tuple) else (value,)
+
+
+def _utc_date(value: datetime) -> date:
+    if not isinstance(value, datetime):
+        raise AnalyticsNormalizationError("collection period values must be datetimes")
+    if value.tzinfo is not None:
+        return value.astimezone(UTC).date()
+    # Existing database periods are UTC-naive.
+    return value.date()

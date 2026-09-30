@@ -95,3 +95,17 @@ systemctl list-timers pinpilot-daily-queue.timer
 
 Failures are available through `journalctl -u pinpilot-daily-queue.service` and
 do not stop the independent `pinpilot.service` web application.
+
+## Optional Pinterest analytics collection
+
+The daily analytics collector and its systemd units are prepared, but are not
+enabled by default. `PINTEREST_ANALYTICS_COLLECTION_ENABLED` defaults to
+`false`; while it is false, the scheduled entry point exits before creating a
+Pinterest API provider or reading OAuth credentials. Do not enable collection
+until Pinterest API access and the required account permissions have been
+confirmed. When explicitly approved, set the flag in the service environment,
+install `deploy/systemd/pinpilot-analytics-collection.service` and
+`deploy/systemd/pinpilot-analytics-collection.timer`, then enable the timer.
+The job refreshes the last seven complete UTC dates and reuses the persisted
+collection run for each account/date when retried. Its logs contain only run,
+failure, and snapshot counts.
