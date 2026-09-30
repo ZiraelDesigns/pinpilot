@@ -26,6 +26,7 @@ from app.models.core import (
     PinterestPublishIntent,
     PinterestPublishIntentStatus,
     SEOGeneration,
+    SEOKeywordIntelligence,
     Product,
 )
 
@@ -57,5 +58,6 @@ __all__ = [
     "PinterestPublishIntent",
     "PinterestPublishIntentStatus",
     "SEOGeneration",
+    "SEOKeywordIntelligence",
     "Product",
 ]

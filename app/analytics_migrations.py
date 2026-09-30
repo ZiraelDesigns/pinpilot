@@ -13,6 +13,7 @@ from app.models import (
     ExperimentEvaluationResult,
     ExperimentVariant,
     SEOGeneration,
+    SEOKeywordIntelligence,
 )
 
 
@@ -142,6 +143,7 @@ def upgrade_analytics_schema(engine: Engine) -> None:
         bind=engine,
         tables=[
             SEOGeneration.__table__,
+            SEOKeywordIntelligence.__table__,
             AIPipelineControl.__table__,
             AIDailyQuotaSlot.__table__,
             Experiment.__table__,

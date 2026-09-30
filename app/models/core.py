@@ -217,6 +217,37 @@ class SEOGeneration(Base):
 
     creative: Mapped[PinCreative | None] = relationship(back_populates="seo_generations")
     product: Mapped[Product | None] = relationship()
+    keyword_intelligence: Mapped["SEOKeywordIntelligence | None"] = relationship(
+        back_populates="seo_generation", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class SEOKeywordIntelligence(Base):
+    """Deterministic, generation-scoped keyword assessment and candidate snapshot."""
+
+    __tablename__ = "seo_keyword_intelligence"
+    __table_args__ = (
+        Index("ix_seo_keyword_intelligence_status_computed", "status", "computed_at"),
+        CheckConstraint(
+            "status IN ('completed', 'unavailable')",
+            name="ck_seo_keyword_intelligence_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    seo_generation_id: Mapped[int] = mapped_column(
+        ForeignKey("seo_generations.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    keyword_items: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    candidate_sets: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    quality_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    external_signals: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    signal_origins: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    seo_generation: Mapped[SEOGeneration] = relationship(back_populates="keyword_intelligence")
 
 
 class PinterestAccount(Base):

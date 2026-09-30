@@ -478,6 +478,15 @@ class AIContentService:
             )
             self.db.add(generation)
             self.db.flush()
+            from app.services.keyword_intelligence import ensure_keyword_intelligence
+
+            ensure_keyword_intelligence(
+                self.db,
+                generation,
+                title=generated.title,
+                description=generated.description,
+                product_tags=context.tags,
+            )
             self._active_generation = None
 
             # ---------------------------------------------------------

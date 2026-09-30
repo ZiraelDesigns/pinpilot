@@ -1,5 +1,6 @@
 from pathlib import Path
 import tempfile
+from datetime import datetime
 
 from sqlalchemy import MetaData, create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
@@ -8,7 +9,7 @@ from sqlalchemy.schema import CreateTable
 
 from app.analytics_migrations import _SNAPSHOT_INDEXES, upgrade_analytics_schema
 from app.database import Base
-from app.models import AnalyticsSnapshot
+from app.models import AnalyticsSnapshot, SEOGeneration, SEOKeywordIntelligence
 import app.models  # noqa: F401 - register all mapped tables before create_all.
 
 
@@ -26,6 +27,7 @@ def test_analytics_migration_runs_on_clean_database_and_is_idempotent():
             assert "analytics_collection_runs" in tables
             assert "pinterest_account_analytics_snapshots" in tables
             assert "seo_generations" in tables
+            assert "seo_keyword_intelligence" in tables
             published_columns = {
                 column["name"] for column in inspect(engine).get_columns("published_pinterest_pins")
             }
@@ -37,6 +39,44 @@ def test_analytics_migration_runs_on_clean_database_and_is_idempotent():
                 "period_end", "fetched_at", "pin_clicks", "engagements", "engagement_rate",
                 "pin_click_rate", "outbound_click_rate", "metric_schema_version",
             } <= columns
+        finally:
+            engine.dispose()
+
+
+def test_keyword_intelligence_schema_upgrade_preserves_legacy_seo_generations():
+    with tempfile.TemporaryDirectory() as directory:
+        engine = create_engine(f"sqlite:///{Path(directory) / 'legacy-seo.db'}")
+        try:
+            legacy_tables = [
+                table for table in Base.metadata.sorted_tables
+                if table.name != "seo_keyword_intelligence"
+            ]
+            Base.metadata.create_all(bind=engine, tables=legacy_tables)
+            with Session(engine) as session:
+                session.add(SEOGeneration(
+                    id=27,
+                    started_at=datetime(2026, 9, 1),
+                    completed_at=datetime(2026, 9, 1),
+                    provider="legacy-provider",
+                    model_name="legacy-model",
+                    prompt_version="legacy-prompt",
+                    schema_version="legacy-schema",
+                    status="completed",
+                    output_snapshot={"seo_metadata": {"primary_keyword": "legacy candle"}},
+                ))
+                session.commit()
+
+            upgrade_analytics_schema(engine)
+            upgrade_analytics_schema(engine)
+
+            assert "seo_keyword_intelligence" in inspect(engine).get_table_names()
+            with Session(engine) as session:
+                preserved = session.get(SEOGeneration, 27)
+                assert preserved.output_snapshot == {"seo_metadata": {"primary_keyword": "legacy candle"}}
+                assert preserved.prompt_version == "legacy-prompt"
+                assert session.query(SEOGeneration).count() == 1
+                # Migration must not fabricate analysis/provenance for old rows.
+                assert session.query(SEOKeywordIntelligence).count() == 0
         finally:
             engine.dispose()
 
