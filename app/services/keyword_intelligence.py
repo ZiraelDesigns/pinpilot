@@ -66,6 +66,11 @@ def _semantic_tokens(value: str) -> set[str]:
     return {_SEMANTIC_ALIASES.get(token, token) for token in _tokens(value)}
 
 
+def semantic_tokens(value: str) -> set[str]:
+    """Return the existing bounded semantic-token normalization for reuse by SEO services."""
+    return _semantic_tokens(value)
+
+
 def _semantic_groups(items: list[dict[str, Any]]) -> None:
     valid = [index for index, item in enumerate(items) if item.get("valid") and item.get("normalized")]
     parents = {index: index for index in valid}

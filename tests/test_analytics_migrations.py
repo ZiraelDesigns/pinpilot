@@ -2,14 +2,21 @@ from pathlib import Path
 import tempfile
 from datetime import datetime
 
-from sqlalchemy import MetaData, create_engine, inspect, text
+from sqlalchemy import MetaData, create_engine, event, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateTable
 
 from app.analytics_migrations import _SNAPSHOT_INDEXES, upgrade_analytics_schema
 from app.database import Base
-from app.models import AnalyticsSnapshot, SEOGeneration, SEOKeywordIntelligence, SEOQualityAssessment
+from app.models import (
+    AnalyticsSnapshot,
+    PinterestBoardRecommendation,
+    PinterestBoardSEOProfile,
+    SEOGeneration,
+    SEOKeywordIntelligence,
+    SEOQualityAssessment,
+)
 import app.models  # noqa: F401 - register all mapped tables before create_all.
 
 
@@ -29,6 +36,20 @@ def test_analytics_migration_runs_on_clean_database_and_is_idempotent():
             assert "seo_generations" in tables
             assert "seo_keyword_intelligence" in tables
             assert "seo_quality_assessments" in tables
+            assert "pinterest_board_seo_profiles" in tables
+            assert "pinterest_board_recommendations" in tables
+            board_columns = {column["name"] for column in inspect(engine).get_columns("pinterest_boards")}
+            assert {"source", "fetched_at", "metadata_version"} <= board_columns
+            board_unique_indexes = {
+                tuple(index["column_names"])
+                for index in inspect(engine).get_indexes("pinterest_boards")
+                if index["unique"]
+            }
+            board_unique_constraints = {
+                tuple(item["column_names"])
+                for item in inspect(engine).get_unique_constraints("pinterest_boards")
+            }
+            assert ("account_id", "board_id") in board_unique_indexes | board_unique_constraints
             published_columns = {
                 column["name"] for column in inspect(engine).get_columns("published_pinterest_pins")
             }
@@ -79,6 +100,135 @@ def test_keyword_intelligence_schema_upgrade_preserves_legacy_seo_generations():
                 # Migration must not fabricate analysis/provenance for old rows.
                 assert session.query(SEOKeywordIntelligence).count() == 0
                 assert session.query(SEOQualityAssessment).count() == 0
+                assert session.query(PinterestBoardSEOProfile).count() == 0
+                assert session.query(PinterestBoardRecommendation).count() == 0
+        finally:
+            engine.dispose()
+
+
+def test_pinterest_board_migration_preserves_ids_references_and_scopes_external_id_by_account():
+    with tempfile.TemporaryDirectory() as directory:
+        engine = create_engine(f"sqlite:///{Path(directory) / 'legacy-boards.db'}")
+        event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
+        try:
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "CREATE TABLE pinterest_accounts (id INTEGER PRIMARY KEY, account_name VARCHAR(255) NOT NULL, "
+                    "account_identifier VARCHAR(255), is_active BOOLEAN NOT NULL, created_at DATETIME)"
+                ))
+                connection.execute(text(
+                    "CREATE TABLE pinterest_boards (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL "
+                    "REFERENCES pinterest_accounts(id), board_id VARCHAR(64) NOT NULL UNIQUE, "
+                    "name VARCHAR(255) NOT NULL, description TEXT, privacy VARCHAR(32), updated_at DATETIME)"
+                ))
+                connection.execute(text(
+                    "CREATE TABLE published_pinterest_pins (id INTEGER PRIMARY KEY, board_id INTEGER "
+                    "REFERENCES pinterest_boards(id) ON DELETE SET NULL)"
+                ))
+                connection.execute(text(
+                    "CREATE TABLE pinterest_publish_intents (id INTEGER PRIMARY KEY, board_id INTEGER "
+                    "REFERENCES pinterest_boards(id) ON DELETE SET NULL)"
+                ))
+                connection.execute(text(
+                    "INSERT INTO pinterest_accounts (id, account_name, account_identifier, is_active) "
+                    "VALUES (1, 'Account One', 'account-one', 1), (2, 'Account Two', 'account-two', 1)"
+                ))
+                connection.execute(text(
+                    "INSERT INTO pinterest_boards (id, account_id, board_id, name, description, updated_at) "
+                    "VALUES (17, 1, 'external-board', 'Old board', 'Original description', '2026-01-01')"
+                ))
+                connection.execute(text("INSERT INTO published_pinterest_pins (id, board_id) VALUES (21, 17)"))
+                connection.execute(text("INSERT INTO pinterest_publish_intents (id, board_id) VALUES (31, 17)"))
+
+            upgrade_analytics_schema(engine)
+            upgrade_analytics_schema(engine)
+
+            with engine.connect() as connection:
+                board = connection.execute(text(
+                    "SELECT id, account_id, board_id, name, description, source, fetched_at, metadata_version "
+                    "FROM pinterest_boards WHERE id=17"
+                )).one()
+                assert tuple(board) == (
+                    17, 1, "external-board", "Old board", "Original description", None, None, None
+                )
+                assert connection.execute(text(
+                    "SELECT board_id FROM published_pinterest_pins WHERE id=21"
+                )).scalar_one() == 17
+                assert connection.execute(text(
+                    "SELECT board_id FROM pinterest_publish_intents WHERE id=31"
+                )).scalar_one() == 17
+                assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
+                board_sql = connection.execute(text(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='pinterest_boards'"
+                )).scalar_one()
+                assert "UNIQUE (account_id, board_id)" in board_sql or "UNIQUE(account_id, board_id)" in board_sql
+                assert "board_id VARCHAR(64) NOT NULL UNIQUE" not in board_sql
+
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "INSERT INTO pinterest_boards (id, account_id, board_id, name, updated_at) "
+                    "VALUES (18, 2, 'external-board', 'Same external ID, other account', '2026-01-02')"
+                ))
+            with engine.begin() as connection:
+                try:
+                    connection.execute(text(
+                        "INSERT INTO pinterest_boards (id, account_id, board_id, name, updated_at) "
+                        "VALUES (19, 1, 'external-board', 'Duplicate in same account', '2026-01-02')"
+                    ))
+                except IntegrityError:
+                    pass
+                else:
+                    raise AssertionError("Board IDs must remain unique within an account")
+        finally:
+            engine.dispose()
+
+
+def test_pinterest_board_explicit_unique_index_is_replaced_without_table_rebuild():
+    with tempfile.TemporaryDirectory() as directory:
+        engine = create_engine(f"sqlite:///{Path(directory) / 'legacy-board-index.db'}")
+        try:
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "CREATE TABLE pinterest_accounts (id INTEGER PRIMARY KEY, account_name VARCHAR(255) NOT NULL, "
+                    "account_identifier VARCHAR(255), is_active BOOLEAN NOT NULL, created_at DATETIME)"
+                ))
+                connection.execute(text(
+                    "CREATE TABLE pinterest_boards (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL "
+                    "REFERENCES pinterest_accounts(id), board_id VARCHAR(64) NOT NULL, name VARCHAR(255) NOT NULL, "
+                    "description TEXT, privacy VARCHAR(32), updated_at DATETIME NOT NULL)"
+                ))
+                connection.execute(text(
+                    "CREATE UNIQUE INDEX ix_pinterest_boards_board_id ON pinterest_boards(board_id)"
+                ))
+                connection.execute(text(
+                    "INSERT INTO pinterest_accounts (id, account_name, account_identifier, is_active) "
+                    "VALUES (1, 'First', 'first-index-account', 1), (2, 'Second', 'second-index-account', 1)"
+                ))
+                connection.execute(text(
+                    "INSERT INTO pinterest_boards (id, account_id, board_id, name, updated_at) "
+                    "VALUES (8, 1, 'same-external', 'First board', '2026-01-01')"
+                ))
+            upgrade_analytics_schema(engine)
+            upgrade_analytics_schema(engine)
+
+            with engine.connect() as connection:
+                board_sql = connection.execute(text(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='pinterest_boards'"
+                )).scalar_one()
+                assert "UNIQUE" not in board_sql
+                assert connection.execute(text(
+                    "SELECT id, board_id FROM pinterest_boards WHERE id=8"
+                )).one() == (8, "same-external")
+                indexes = inspect(connection).get_indexes("pinterest_boards")
+                assert any(index["unique"] and index["column_names"] == ["account_id", "board_id"]
+                           for index in indexes)
+                assert not any(index["unique"] and index["column_names"] == ["board_id"]
+                               for index in indexes)
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "INSERT INTO pinterest_boards (id, account_id, board_id, name, updated_at) "
+                    "VALUES (9, 2, 'same-external', 'Other account board', '2026-01-02')"
+                ))
         finally:
             engine.dispose()
 

@@ -200,16 +200,48 @@ class PinterestApiService:
         return self._client().get_user_account_analytics(start_date, end_date)
 
     def sync_boards(self) -> int:
+        from app.services.board_intelligence import (
+            BOARD_METADATA_VERSION,
+            BOARD_SOURCE_API,
+            ensure_board_seo_profiles,
+        )
+
         count = 0
+        fetched_at = datetime.utcnow()
+        existing_boards = {
+            board.board_id: board
+            for board in self.db.query(PinterestBoard).filter_by(account_id=self.account.id).all()
+        }
+        touched_boards: dict[str, PinterestBoard] = {}
         for data in self.fetch_boards():
-            board_id = str(data["id"])
-            board = self.db.query(PinterestBoard).filter_by(board_id=board_id).one_or_none()
+            external_id = data.get("id")
+            name = data.get("name")
+            if not isinstance(external_id, (str, int)) or not str(external_id).strip():
+                continue
+            if not isinstance(name, str) or not name.strip():
+                continue
+            board_id = str(external_id)
+            if board_id in touched_boards:
+                continue
+            board = existing_boards.get(board_id)
             if not board:
-                board = PinterestBoard(account=self.account, board_id=board_id, name=data.get("name", "Pinterest board"))
+                board = PinterestBoard(
+                    account=self.account,
+                    board_id=board_id,
+                    name=name.strip(),
+                )
                 self.db.add(board)
-            board.name = data.get("name", "Pinterest board")
-            board.description = data.get("description")
-            board.privacy = data.get("privacy")
+                existing_boards[board_id] = board
+            board.name = name.strip()
+            board.description = data.get("description") if isinstance(data.get("description"), str) else None
+            board.privacy = data.get("privacy") if isinstance(data.get("privacy"), str) else None
+            board.source = BOARD_SOURCE_API
+            board.fetched_at = fetched_at
+            board.metadata_version = BOARD_METADATA_VERSION
+            board.updated_at = fetched_at
+            touched_boards[board_id] = board
             count += 1
+        self.db.flush()
+        ensure_board_seo_profiles(self.db, list(touched_boards.values()))
         self.db.commit()
         return count

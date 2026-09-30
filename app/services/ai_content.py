@@ -490,6 +490,9 @@ class AIContentService:
             from app.services.seo_quality import ensure_seo_quality_assessment
 
             ensure_seo_quality_assessment(self.db, generation, generation.keyword_intelligence)
+            from app.services.board_intelligence import recommend_boards_for_all_accounts
+
+            recommend_boards_for_all_accounts(self.db, generation.id)
             self._active_generation = None
 
             # ---------------------------------------------------------

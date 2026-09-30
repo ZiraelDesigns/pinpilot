@@ -223,6 +223,9 @@ class SEOGeneration(Base):
     quality_assessment: Mapped["SEOQualityAssessment | None"] = relationship(
         back_populates="seo_generation", cascade="all, delete-orphan", uselist=False
     )
+    board_recommendations: Mapped[list["PinterestBoardRecommendation"]] = relationship(
+        back_populates="seo_generation", cascade="all, delete-orphan"
+    )
 
 
 class SEOKeywordIntelligence(Base):
@@ -333,17 +336,109 @@ class PinterestBoard(Base):
     """A locally cached board reference; it does not create or edit Pinterest boards."""
 
     __tablename__ = "pinterest_boards"
+    __table_args__ = (
+        UniqueConstraint("account_id", "board_id", name="uq_pinterest_boards_account_external_id"),
+        Index("ix_pinterest_boards_board_id", "board_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("pinterest_accounts.id"), nullable=False)
-    board_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    board_id: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     privacy: Mapped[str | None] = mapped_column(String(32))
+    source: Mapped[str | None] = mapped_column(String(64))
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime)
+    metadata_version: Mapped[str | None] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     account: Mapped[PinterestAccount] = relationship(back_populates="boards")
     published_pins: Mapped[list["PublishedPinterestPin"]] = relationship(back_populates="board")
     publish_intents: Mapped[list["PinterestPublishIntent"]] = relationship(back_populates="board")
+    seo_profiles: Mapped[list["PinterestBoardSEOProfile"]] = relationship(
+        back_populates="board", cascade="all, delete-orphan"
+    )
+    recommendations: Mapped[list["PinterestBoardRecommendation"]] = relationship(back_populates="board")
+
+
+class PinterestBoardSEOProfile(Base):
+    """Immutable deterministic SEO profile for one observed board metadata version."""
+
+    __tablename__ = "pinterest_board_seo_profiles"
+    __table_args__ = (
+        UniqueConstraint(
+            "board_id", "metadata_fingerprint", "algorithm_version",
+            name="uq_pinterest_board_seo_profile_version",
+        ),
+        Index("ix_pinterest_board_seo_profiles_board_computed", "board_id", "computed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    board_id: Mapped[int] = mapped_column(
+        ForeignKey("pinterest_boards.id", ondelete="CASCADE"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    metadata_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation_type: Mapped[str] = mapped_column(String(32), nullable=False, default="deterministic_computed")
+    input_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    normalized_terms: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    keyword_items: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    search_intents: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    audience_signals: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    use_case_signals: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    topic_signals: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    external_signals: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    board: Mapped[PinterestBoard] = relationship(back_populates="seo_profiles")
+    recommendations: Mapped[list["PinterestBoardRecommendation"]] = relationship(back_populates="board_profile")
+
+
+class PinterestBoardRecommendation(Base):
+    """Explainable SEO-generation-to-board match; never a publish instruction."""
+
+    __tablename__ = "pinterest_board_recommendations"
+    __table_args__ = (
+        UniqueConstraint(
+            "seo_generation_id", "board_profile_id", "algorithm_version", "scope_key", "cohort_fingerprint",
+            name="uq_pinterest_board_recommendation_generation_profile_version",
+        ),
+        CheckConstraint("match_score >= 0 AND match_score <= 100", name="ck_pinterest_board_recommendation_score"),
+        CheckConstraint(
+            "status IN ('recommended', 'candidate', 'rejected')",
+            name="ck_pinterest_board_recommendation_status",
+        ),
+        Index("ix_pinterest_board_recommendations_generation_rank", "seo_generation_id", "rank"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    seo_generation_id: Mapped[int] = mapped_column(
+        ForeignKey("seo_generations.id", ondelete="CASCADE"), nullable=False
+    )
+    board_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pinterest_boards.id", ondelete="SET NULL"), nullable=True
+    )
+    board_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pinterest_board_seo_profiles.id", ondelete="SET NULL"), nullable=True
+    )
+    account_identifier_snapshot: Mapped[str | None] = mapped_column(String(255))
+    external_board_id_snapshot: Mapped[str] = mapped_column(String(64), nullable=False)
+    board_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    cohort_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    match_score: Mapped[int] = mapped_column(nullable=False)
+    rank: Mapped[int | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    match_breakdown: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    positive_signals: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    negative_signals: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+
+    seo_generation: Mapped[SEOGeneration] = relationship(back_populates="board_recommendations")
+    board: Mapped[PinterestBoard | None] = relationship(back_populates="recommendations")
+    board_profile: Mapped[PinterestBoardSEOProfile | None] = relationship(back_populates="recommendations")
 
 
 class EtsyAccount(Base):

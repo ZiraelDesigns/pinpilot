@@ -12,6 +12,10 @@ from app.models import (
     ExperimentEvaluation,
     ExperimentEvaluationResult,
     ExperimentVariant,
+    PinterestAccount,
+    PinterestBoard,
+    PinterestBoardRecommendation,
+    PinterestBoardSEOProfile,
     SEOGeneration,
     SEOKeywordIntelligence,
     SEOQualityAssessment,
@@ -128,6 +132,200 @@ def _make_legacy_metrics_nullable(engine: Engine) -> None:
             )
 
 
+def _sqlite_board_unique_indexes(engine: Engine) -> list[tuple[str, list[str], str]]:
+    with engine.connect() as connection:
+        indexes = connection.exec_driver_sql("PRAGMA index_list('pinterest_boards')").all()
+        result = []
+        for row in indexes:
+            if not row[2]:
+                continue
+            name = str(row[1])
+            escaped = name.replace("'", "''")
+            columns = [str(item[2]) for item in connection.exec_driver_sql(
+                f"PRAGMA index_info('{escaped}')"
+            ).all()]
+            result.append((name, columns, str(row[3])))
+        return result
+
+
+def _board_has_global_external_id_unique(engine: Engine) -> bool:
+    if engine.dialect.name == "sqlite":
+        return any(columns == ["board_id"] for _, columns, _ in _sqlite_board_unique_indexes(engine))
+    inspector = inspect(engine)
+    unique_constraints = inspector.get_unique_constraints("pinterest_boards")
+    if any(item.get("column_names") == ["board_id"] for item in unique_constraints):
+        return True
+    indexes = inspector.get_indexes("pinterest_boards")
+    return any(item.get("unique") and item.get("column_names") == ["board_id"] for item in indexes)
+
+
+def _board_has_account_scoped_unique(engine: Engine) -> bool:
+    if engine.dialect.name == "sqlite":
+        return any(
+            columns == ["account_id", "board_id"]
+            for _, columns, _ in _sqlite_board_unique_indexes(engine)
+        )
+    inspector = inspect(engine)
+    if any(
+        item.get("column_names") == ["account_id", "board_id"]
+        for item in inspector.get_unique_constraints("pinterest_boards")
+    ):
+        return True
+    return any(
+        item.get("unique") and item.get("column_names") == ["account_id", "board_id"]
+        for item in inspector.get_indexes("pinterest_boards")
+    )
+
+
+def _ensure_account_scoped_board_unique(engine: Engine) -> None:
+    if _board_has_account_scoped_unique(engine):
+        return
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_pinterest_boards_account_external_id "
+            "ON pinterest_boards (account_id, board_id)"
+        ))
+
+
+def _upgrade_pinterest_board_schema(engine: Engine) -> None:
+    """Add board provenance and scope external-ID uniqueness by Pinterest account.
+
+    SQLite cannot drop a UNIQUE constraint in place. Its board table is rebuilt
+    with IDs and dependent references copied unchanged; foreign keys are disabled
+    only for the transaction and checked immediately after it commits.
+    """
+    if "pinterest_boards" not in inspect(engine).get_table_names():
+        return
+    additions = {
+        "source": "VARCHAR(64)",
+        "fetched_at": "DATETIME",
+        "metadata_version": "VARCHAR(64)",
+    }
+    columns = {item["name"] for item in inspect(engine).get_columns("pinterest_boards")}
+    with engine.begin() as connection:
+        for name, definition in additions.items():
+            if name not in columns:
+                connection.execute(text(f"ALTER TABLE pinterest_boards ADD COLUMN {name} {definition}"))
+                columns.add(name)
+
+    if not _board_has_global_external_id_unique(engine):
+        _ensure_account_scoped_board_unique(engine)
+        return
+    if engine.dialect.name == "sqlite":
+        global_uniques = [
+            (name, origin)
+            for name, columns, origin in _sqlite_board_unique_indexes(engine)
+            if columns == ["board_id"]
+        ]
+        if global_uniques and all(origin == "c" for _, origin in global_uniques):
+            # The historical ORM mapping often created a standalone unique
+            # index. Removing that index in place avoids rebuilding the table.
+            with engine.begin() as connection:
+                preparer = engine.dialect.identifier_preparer
+                for name, _ in global_uniques:
+                    connection.exec_driver_sql(f"DROP INDEX {preparer.quote(name)}")
+            for index in PinterestBoard.__table__.indexes:
+                index.create(bind=engine, checkfirst=True)
+            _ensure_account_scoped_board_unique(engine)
+            return
+    if engine.dialect.name == "postgresql":
+        inspector = inspect(engine)
+        unique_constraints = inspector.get_unique_constraints("pinterest_boards")
+        constraint_names = {
+            item["name"] for item in unique_constraints
+            if item.get("name") and item.get("column_names") == ["board_id"]
+        }
+        with engine.begin() as connection:
+            preparer = engine.dialect.identifier_preparer
+            for name in sorted(constraint_names):
+                connection.execute(text(
+                    f"ALTER TABLE pinterest_boards DROP CONSTRAINT {preparer.quote(name)}"
+                ))
+            for item in inspector.get_indexes("pinterest_boards"):
+                if (
+                    item.get("unique")
+                    and item.get("column_names") == ["board_id"]
+                    and not item.get("duplicates_constraint")
+                ):
+                    connection.execute(text(f"DROP INDEX IF EXISTS {preparer.quote(item['name'])}"))
+        _ensure_account_scoped_board_unique(engine)
+        return
+    if engine.dialect.name != "sqlite":
+        raise RuntimeError(
+            "The legacy Pinterest board external-ID uniqueness needs a dialect-specific, data-preserving migration."
+        )
+
+    inspector = inspect(engine)
+    unique_index_names = {
+        name for name, columns, _ in _sqlite_board_unique_indexes(engine) if columns == ["board_id"]
+    }
+    with engine.connect() as connection:
+        saved_objects = connection.execute(text(
+            "SELECT type, name, sql FROM sqlite_master "
+            "WHERE tbl_name = 'pinterest_boards' AND type IN ('index', 'trigger') "
+            "AND sql IS NOT NULL ORDER BY type, name"
+        )).all()
+        expected_count = connection.execute(
+            text("SELECT COUNT(*) FROM pinterest_boards")
+        ).scalar_one()
+    temporary_name = "pinterest_boards__account_scope_migration"
+    raw = engine.raw_connection()
+    cursor = raw.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=OFF")
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (temporary_name,))
+        if cursor.fetchone():
+            raise RuntimeError(f"Unexpected leftover migration table: {temporary_name}")
+
+        replacement_metadata = MetaData()
+        PinterestAccount.__table__.to_metadata(replacement_metadata)
+        replacement = PinterestBoard.__table__.to_metadata(
+            replacement_metadata, name=temporary_name
+        )
+        cursor.execute(str(CreateTable(replacement).compile(dialect=engine.dialect)))
+        preparer = engine.dialect.identifier_preparer
+        names = [column.name for column in PinterestBoard.__table__.columns]
+        quoted_names = ", ".join(preparer.quote(name) for name in names)
+        cursor.execute(
+            f"INSERT INTO {preparer.quote(temporary_name)} ({quoted_names}) "
+            f"SELECT {quoted_names} FROM {preparer.quote('pinterest_boards')}"
+        )
+        cursor.execute("DROP TABLE pinterest_boards")
+        cursor.execute(
+            f"ALTER TABLE {preparer.quote(temporary_name)} RENAME TO pinterest_boards"
+        )
+        for object_type, object_name, statement in saved_objects:
+            if object_type == "trigger":
+                cursor.execute(statement)
+            elif object_name not in unique_index_names:
+                cursor.execute(statement)
+        cursor.execute("COMMIT")
+    except Exception:
+        try:
+            cursor.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+        raw.close()
+
+    for index in PinterestBoard.__table__.indexes:
+        index.create(bind=engine, checkfirst=True)
+    _ensure_account_scoped_board_unique(engine)
+    with engine.connect() as connection:
+        actual_count = connection.execute(text("SELECT COUNT(*) FROM pinterest_boards")).scalar_one()
+        fk_violations = connection.execute(text("PRAGMA foreign_key_check")).all()
+    if actual_count != expected_count:
+        raise RuntimeError(
+            f"Pinterest board row count changed during migration ({expected_count} -> {actual_count})."
+        )
+    if fk_violations:
+        raise RuntimeError("Pinterest board migration produced foreign-key violations.")
+
+
 def upgrade_analytics_schema(engine: Engine) -> None:
     """Add analytics links/metrics to legacy tables without rewriting their rows.
 
@@ -143,9 +341,13 @@ def upgrade_analytics_schema(engine: Engine) -> None:
     Base.metadata.create_all(
         bind=engine,
         tables=[
+            PinterestAccount.__table__,
+            PinterestBoard.__table__,
             SEOGeneration.__table__,
             SEOKeywordIntelligence.__table__,
             SEOQualityAssessment.__table__,
+            PinterestBoardSEOProfile.__table__,
+            PinterestBoardRecommendation.__table__,
             AIPipelineControl.__table__,
             AIDailyQuotaSlot.__table__,
             Experiment.__table__,
@@ -155,6 +357,7 @@ def upgrade_analytics_schema(engine: Engine) -> None:
             ExperimentEvaluationResult.__table__,
         ],
     )
+    _upgrade_pinterest_board_schema(engine)
     with engine.begin() as connection:
         connection.execute(text(
             "INSERT INTO ai_pipeline_controls (id, enabled, updated_at) "
