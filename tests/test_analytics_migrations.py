@@ -9,7 +9,7 @@ from sqlalchemy.schema import CreateTable
 
 from app.analytics_migrations import _SNAPSHOT_INDEXES, upgrade_analytics_schema
 from app.database import Base
-from app.models import AnalyticsSnapshot, SEOGeneration, SEOKeywordIntelligence
+from app.models import AnalyticsSnapshot, SEOGeneration, SEOKeywordIntelligence, SEOQualityAssessment
 import app.models  # noqa: F401 - register all mapped tables before create_all.
 
 
@@ -28,6 +28,7 @@ def test_analytics_migration_runs_on_clean_database_and_is_idempotent():
             assert "pinterest_account_analytics_snapshots" in tables
             assert "seo_generations" in tables
             assert "seo_keyword_intelligence" in tables
+            assert "seo_quality_assessments" in tables
             published_columns = {
                 column["name"] for column in inspect(engine).get_columns("published_pinterest_pins")
             }
@@ -77,6 +78,7 @@ def test_keyword_intelligence_schema_upgrade_preserves_legacy_seo_generations():
                 assert session.query(SEOGeneration).count() == 1
                 # Migration must not fabricate analysis/provenance for old rows.
                 assert session.query(SEOKeywordIntelligence).count() == 0
+                assert session.query(SEOQualityAssessment).count() == 0
         finally:
             engine.dispose()
 

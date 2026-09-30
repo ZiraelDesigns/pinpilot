@@ -487,6 +487,9 @@ class AIContentService:
                 description=generated.description,
                 product_tags=context.tags,
             )
+            from app.services.seo_quality import ensure_seo_quality_assessment
+
+            ensure_seo_quality_assessment(self.db, generation, generation.keyword_intelligence)
             self._active_generation = None
 
             # ---------------------------------------------------------

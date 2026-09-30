@@ -220,6 +220,9 @@ class SEOGeneration(Base):
     keyword_intelligence: Mapped["SEOKeywordIntelligence | None"] = relationship(
         back_populates="seo_generation", cascade="all, delete-orphan", uselist=False
     )
+    quality_assessment: Mapped["SEOQualityAssessment | None"] = relationship(
+        back_populates="seo_generation", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class SEOKeywordIntelligence(Base):
@@ -248,6 +251,35 @@ class SEOKeywordIntelligence(Base):
     signal_origins: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
     seo_generation: Mapped[SEOGeneration] = relationship(back_populates="keyword_intelligence")
+
+
+class SEOQualityAssessment(Base):
+    """Versioned deterministic SEO score and validation result for a generation."""
+
+    __tablename__ = "seo_quality_assessments"
+    __table_args__ = (
+        Index("ix_seo_quality_assessments_score_version", "score_version"),
+        CheckConstraint("overall_score >= 0 AND overall_score <= 100", name="ck_seo_quality_assessment_score"),
+        CheckConstraint(
+            "validation_status IN ('PASS', 'WARN', 'FAIL')",
+            name="ck_seo_quality_assessment_validation_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    seo_generation_id: Mapped[int] = mapped_column(
+        ForeignKey("seo_generations.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    assessed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    score_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    validation_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation_type: Mapped[str] = mapped_column(String(32), nullable=False, default="deterministic_heuristic")
+    overall_score: Mapped[int] = mapped_column(nullable=False)
+    score_breakdown: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    validation_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    validation_result: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    seo_generation: Mapped[SEOGeneration] = relationship(back_populates="quality_assessment")
 
 
 class PinterestAccount(Base):
