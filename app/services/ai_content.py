@@ -6,12 +6,13 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Protocol
 
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import EtsyListing, PinCreative, PinGenerationJob, Product
+from app.models import EtsyListing, PinCreative, PinGenerationJob, Product, SEOGeneration
 from app.models.core import PinCreativeSourceType, PinCreativeStatus, PinCreativeType
 from app.services.ai_pipeline import (
     reserve_ai_capacity,
@@ -32,6 +33,10 @@ class AIValidationError(AIContentError):
     """
 
 
+SEO_PROMPT_VERSION = "pinterest_seo_v2"
+SEO_SCHEMA_VERSION = "pinterest_seo_metadata_v2"
+
+
 @dataclass(frozen=True)
 class ProductContext:
     title: str
@@ -50,6 +55,9 @@ class AIContentProvider(Protocol):
 
 class MockAIContentProvider:
     """Deterministic local provider for development and tests."""
+
+    provider_name = "mock"
+    model_name = "unknown"
 
     def generate_json(self, prompt: str) -> str:
         payload = json.loads(prompt.rsplit("INPUT_JSON=", 1)[1])
@@ -102,6 +110,8 @@ class MockAIContentProvider:
 class GeminiAIContentProvider:
     """Google Gemini provider for Pinterest title/description/keyword generation."""
 
+    provider_name = "gemini"
+
     def __init__(self) -> None:
         if not settings.gemini_api_key:
             raise AIContentError(
@@ -141,6 +151,11 @@ class GeminiAIContentProvider:
             )
 
         return text
+
+    @property
+    def model_name(self) -> str:
+        # Capture the configured model at generation time; never store credentials.
+        return settings.gemini_model or "unknown"
 
 
 class DisabledRemoteAIProvider:
@@ -204,6 +219,7 @@ class AIContentService:
         self.db = db
         # Keep provider setup lazy: syncing Etsy mockups must not require or initialize Gemini.
         self.provider = provider
+        self._active_generation: dict[str, object] | None = None
 
     def product_context(self, product: Product) -> ProductContext:
         listing = (
@@ -280,7 +296,32 @@ class AIContentService:
         except Exception:
             self.db.rollback()
             release_reservations(self.db, [slot.id for slot in slots])
+            self._persist_failed_generation()
             raise
+
+    def _persist_failed_generation(self) -> None:
+        """Keep a sanitized failed attempt after the creative transaction rolls back."""
+        attempt = self._active_generation
+        self._active_generation = None
+        if not attempt:
+            return
+        try:
+            self.db.add(SEOGeneration(
+                product_id=attempt["product_id"],
+                started_at=attempt["started_at"],
+                completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                provider=attempt["provider"],
+                model_name=attempt["model_name"],
+                prompt_version=SEO_PROMPT_VERSION,
+                schema_version=SEO_SCHEMA_VERSION,
+                status="failed",
+                output_snapshot=attempt.get("output_snapshot"),
+                error_category=attempt.get("error_category", "generation_error"),
+            ))
+            self.db.commit()
+        except Exception:
+            # Provenance persistence must not replace or expose the original error.
+            self.db.rollback()
 
     def _generate_reserved(
         self,
@@ -303,6 +344,25 @@ class AIContentService:
 
         created: list[PinCreative] = []
         previous_seo = self._previous_ai_seo_context(product.id)
+        provider_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        try:
+            provider = self.provider or get_ai_provider()
+        except Exception:
+            provider_name = settings.ai_provider.lower() or "unknown"
+            model_name = settings.gemini_model if provider_name == "gemini" else "unknown"
+            self._active_generation = {
+                "product_id": product.id,
+                "started_at": provider_started_at,
+                "provider": provider_name[:64],
+                "model_name": str(model_name or "unknown")[:128],
+                "error_category": "configuration_error",
+            }
+            raise
+        provider_name = getattr(provider, "provider_name", type(provider).__name__)[:64]
+        model_name = getattr(provider, "model_name", "unknown")
+        if callable(model_name):
+            model_name = model_name()
+        model_name = str(model_name or "unknown")[:128]
 
         image_provider = None
 
@@ -339,8 +399,16 @@ class AIContentService:
             # 1. Generate Pinterest SEO content with Gemini
             # ---------------------------------------------------------
 
+            started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            self._active_generation = {
+                "product_id": product.id,
+                "started_at": started_at,
+                "provider": provider_name,
+                "model_name": model_name,
+                "error_category": "provider_error",
+            }
             try:
-                raw_content = (self.provider or get_ai_provider()).generate_json(
+                raw_content = provider.generate_json(
                     self._prompt(context, creative_type.value, variation, previous_seo)
                 )
             except Exception as exc:
@@ -355,10 +423,14 @@ class AIContentService:
                 raise AIContentError(
                     "AI içerik sağlayıcısı başarısız oldu; hata ayrıntıları güvenlik için gizlendi."
                 ) from None
+            self._active_generation["error_category"] = "validation_error"
             generated = self._parse_generated_json(
                 raw_content,
                 context,
                 creative_type.value,
+            )
+            self._active_generation["output_snapshot"] = self._seo_output_snapshot(
+                generated, creative_type.value
             )
             self._ensure_seo_is_novel(generated.seo_metadata, previous_seo)
 
@@ -392,11 +464,37 @@ class AIContentService:
             # generation process is completed.
             self.db.flush()
 
+            generation = SEOGeneration(
+                product_id=product.id,
+                creative=creative,
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                provider=provider_name,
+                model_name=model_name,
+                prompt_version=SEO_PROMPT_VERSION,
+                schema_version=SEO_SCHEMA_VERSION,
+                status="completed",
+                output_snapshot=self._seo_output_snapshot(generated, creative_type.value),
+            )
+            self.db.add(generation)
+            self.db.flush()
+            self._active_generation = None
+
             # ---------------------------------------------------------
             # 3. Generate Pinterest image with OpenAI
             # ---------------------------------------------------------
 
             if image_provider is not None and context.images:
+                # A later image failure still leaves a failed generation record with
+                # the valid SEO output snapshot after the outer transaction rolls back.
+                self._active_generation = {
+                    "product_id": product.id,
+                    "started_at": started_at,
+                    "provider": provider_name,
+                    "model_name": model_name,
+                    "output_snapshot": self._seo_output_snapshot(generated, creative_type.value),
+                    "error_category": "image_generation_error",
+                }
                 try:
                     from app.services.ai_image import save_generated_image
 
@@ -421,6 +519,8 @@ class AIContentService:
                         "Pinterest görseli oluşturulamadı; sağlayıcı hatası güvenlik için gizlendi."
                     ) from None
 
+            self._active_generation = None
+
             created.append(creative)
             previous_seo.append(self._seo_context_item(generated.title, generated.seo_metadata))
             variation += 1
@@ -428,6 +528,20 @@ class AIContentService:
         self.db.flush()
 
         return created
+
+    @staticmethod
+    def _seo_output_snapshot(
+        generated: GeneratedCreative, creative_type: str
+    ) -> dict[str, object]:
+        """Copy output fields used later for analytics attribution and audit."""
+        return {
+            "title": generated.title,
+            "description": generated.description,
+            "call_to_action": generated.call_to_action,
+            "keywords": list(generated.keywords),
+            "seo_metadata": dict(generated.seo_metadata),
+            "creative_type": creative_type,
+        }
 
     def ensure_mockup_creatives(self, product: Product, listing: EtsyListing) -> list[PinCreative]:
         """Add each Etsy image to the Pin pool once, without invoking an AI provider.

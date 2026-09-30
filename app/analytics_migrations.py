@@ -12,6 +12,7 @@ from app.models import (
     ExperimentEvaluation,
     ExperimentEvaluationResult,
     ExperimentVariant,
+    SEOGeneration,
 )
 
 
@@ -140,6 +141,7 @@ def upgrade_analytics_schema(engine: Engine) -> None:
     Base.metadata.create_all(
         bind=engine,
         tables=[
+            SEOGeneration.__table__,
             AIPipelineControl.__table__,
             AIDailyQuotaSlot.__table__,
             Experiment.__table__,
@@ -170,8 +172,13 @@ def upgrade_analytics_schema(engine: Engine) -> None:
             "snapshot_ids": "JSON NOT NULL DEFAULT '[]'",
         },
     }
+    provenance_columns = {
+        "published_pinterest_pins": {
+            "seo_generation_id": "INTEGER REFERENCES seo_generations(id) ON DELETE SET NULL",
+        },
+    }
     with engine.begin() as connection:
-        for table_name, additions in experiment_columns.items():
+        for table_name, additions in {**experiment_columns, **provenance_columns}.items():
             if table_name not in table_names:
                 continue
             columns = {column["name"] for column in inspect(connection).get_columns(table_name)}
@@ -180,6 +187,11 @@ def upgrade_analytics_schema(engine: Engine) -> None:
                     connection.execute(text(
                         f"ALTER TABLE {table_name} ADD COLUMN {name} {definition}"
                     ))
+        if "published_pinterest_pins" in table_names:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_published_pinterest_pins_seo_generation_id "
+                "ON published_pinterest_pins (seo_generation_id)"
+            ))
     if "analytics_snapshots" not in table_names:
         return
 

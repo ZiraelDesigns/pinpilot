@@ -25,6 +25,7 @@ from app.models.core import (
     PinterestOAuthState,
     PinterestPublishIntent,
     PinterestPublishIntentStatus,
+    SEOGeneration,
     Product,
 )
 
@@ -55,5 +56,6 @@ __all__ = [
     "PinterestOAuthState",
     "PinterestPublishIntent",
     "PinterestPublishIntentStatus",
+    "SEOGeneration",
     "Product",
 ]

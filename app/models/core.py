@@ -183,6 +183,40 @@ class PinCreative(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     product: Mapped[Product] = relationship(back_populates="creatives")
     pins: Mapped[list[Pin]] = relationship(back_populates="creative")
+    seo_generations: Mapped[list["SEOGeneration"]] = relationship(
+        back_populates="creative", order_by="SEOGeneration.started_at"
+    )
+
+
+class SEOGeneration(Base):
+    """Immutable provenance and output snapshot for one SEO generation attempt."""
+
+    __tablename__ = "seo_generations"
+    __table_args__ = (
+        Index("ix_seo_generations_creative_started", "creative_id", "started_at"),
+        Index("ix_seo_generations_status_started", "status", "started_at"),
+        CheckConstraint("status IN ('completed', 'failed')", name="ck_seo_generations_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int | None] = mapped_column(
+        ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    creative_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pin_creatives.id", ondelete="SET NULL"), nullable=True
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False, default="unknown")
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    output_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    creative: Mapped[PinCreative | None] = relationship(back_populates="seo_generations")
+    product: Mapped[Product | None] = relationship()
 
 
 class PinterestAccount(Base):
@@ -404,6 +438,9 @@ class PublishedPinterestPin(Base):
     )
     account_identifier_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
     external_pin_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    seo_generation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("seo_generations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     published_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     metadata_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
@@ -412,12 +449,18 @@ class PublishedPinterestPin(Base):
     account: Mapped[PinterestAccount | None] = relationship(back_populates="published_pins")
     board: Mapped[PinterestBoard | None] = relationship(back_populates="published_pins")
     analytics: Mapped[list[AnalyticsSnapshot]] = relationship(back_populates="published_pin")
+    seo_generation: Mapped[SEOGeneration | None] = relationship()
 
     @classmethod
     def capture_metadata(cls, pin: Pin) -> dict:
         """Copy only analysis-relevant creative fields at publication time."""
         creative = pin.creative
         seo = deepcopy(creative.seo_metadata or {}) if creative else {}
+        seo_generation = (
+            creative.seo_generations[-1]
+            if creative and creative.seo_generations
+            else None
+        )
         return {
             "product_id": creative.product_id if creative else pin.product_id,
             "creative_type": creative.creative_type if creative else None,
@@ -428,6 +471,8 @@ class PublishedPinterestPin(Base):
             "seo_metadata": seo,
             "primary_keyword": seo.get("primary_keyword"),
             "creative_angle": seo.get("creative_angle"),
+            "seo_generation_id": seo_generation.id if seo_generation else None,
+            "seo_provenance_status": "known" if seo_generation else "unknown",
             "image_media_reference": (
                 pin.image_path or (creative.image_path or creative.source_image_url if creative else None)
             ),

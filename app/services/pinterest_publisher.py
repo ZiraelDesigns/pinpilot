@@ -356,14 +356,16 @@ class PinterestPublisher:
         published_at = result.published_at
         if published_at.tzinfo is not None:
             published_at = published_at.astimezone(timezone.utc).replace(tzinfo=None)
+        metadata_snapshot = PublishedPinterestPin.capture_metadata(pin)
         publication = PublishedPinterestPin(
             pin=pin,
             account=account,
             board=board,
             account_identifier_snapshot=account.account_identifier,
             external_pin_id=result.external_pin_id,
+            seo_generation_id=metadata_snapshot.get("seo_generation_id"),
             published_at=published_at,
-            metadata_snapshot=PublishedPinterestPin.capture_metadata(pin),
+            metadata_snapshot=metadata_snapshot,
         )
         self.db.add(publication)
         intent.published_pin = publication

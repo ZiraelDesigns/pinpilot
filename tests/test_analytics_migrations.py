@@ -25,6 +25,11 @@ def test_analytics_migration_runs_on_clean_database_and_is_idempotent():
             assert "pinterest_publish_intents" in tables
             assert "analytics_collection_runs" in tables
             assert "pinterest_account_analytics_snapshots" in tables
+            assert "seo_generations" in tables
+            published_columns = {
+                column["name"] for column in inspect(engine).get_columns("published_pinterest_pins")
+            }
+            assert "seo_generation_id" in published_columns
             columns = {column["name"] for column in inspect(engine).get_columns("analytics_snapshots")}
             assert {
                 "pin_id", "impressions", "saves", "outbound_clicks", "recorded_at",
