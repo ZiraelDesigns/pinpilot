@@ -810,6 +810,37 @@ class PinterestAccountAnalyticsSnapshot(Base):
     collection_run: Mapped[AnalyticsCollectionRun | None] = relationship(back_populates="account_snapshots")
 
 
+class SEOPerformanceLearning(Base):
+    """Immutable, versioned learning output from existing Pin analytics snapshots."""
+
+    __tablename__ = "seo_performance_learnings"
+    __table_args__ = (
+        UniqueConstraint("algorithm_version", "source_fingerprint", name="uq_seo_performance_learning_source"),
+        CheckConstraint(
+            "status IN ('completed', 'insufficient_data', 'missing_provenance')",
+            name="ck_seo_performance_learning_status",
+        ),
+        Index("ix_seo_performance_learnings_period", "window_start", "window_end"),
+        Index("ix_seo_performance_learnings_account_period", "account_id", "window_start", "window_end"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pinterest_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    account_identifier_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    window_start: Mapped[date] = mapped_column(Date, nullable=False)
+    window_end: Mapped[date] = mapped_column(Date, nullable=False)
+    calculated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_snapshot_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False, default=list)
+    calculation_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    result_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
 class Experiment(Base):
     """A manually evaluated creative test; it never selects or applies a winner."""
 
