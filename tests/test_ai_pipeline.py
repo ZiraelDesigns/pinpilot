@@ -8,6 +8,7 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import (
     AIDailyQuotaSlot,
+    AIPipelineControl,
     EtsyAccount,
     EtsyListing,
     PinCreative,
@@ -39,11 +40,16 @@ def _worker(factory=AIContentService):
     return AIGenerationWorker(SessionLocal, content_service_factory=factory)
 
 
-def test_pipeline_defaults_on_and_toggle_is_persistent():
+def test_pipeline_defaults_off_and_toggle_is_persistent():
     with TestClient(app) as client:
+        db = SessionLocal()
+        db.delete(db.get(AIPipelineControl, 1))
+        db.commit()
+        db.close()
         status = client.get("/pipeline/status")
         assert status.status_code == 200
-        assert status.json()["enabled"] is True
+        assert status.json()["enabled"] is False
+        assert client.post("/pipeline/toggle", json={"enabled": True}).json()["enabled"] is True
         assert client.post("/pipeline/toggle", json={"enabled": False}).json()["enabled"] is False
         assert client.get("/pipeline/status").json()["enabled"] is False
         assert client.post("/pipeline/toggle", json={"enabled": True}).json()["enabled"] is True
@@ -130,6 +136,7 @@ def test_mockup_stock_does_not_reduce_ai_capacity_or_daily_job_size():
                 for i in range(100)
             ])
             db.commit()
+            set_pipeline_enabled(db, True)
             assert quota_counts(db)["remaining"] == 15
             result = DailyPinScheduler(db).schedule_daily(date(2035, 1, 3))
             job = db.query(PinGenerationJob).one()
@@ -148,6 +155,7 @@ def test_successful_ai_creatives_use_exactly_fifteen_slots_and_sixteenth_is_bloc
         db = SessionLocal()
         product = _product(db)
         try:
+            set_pipeline_enabled(db, True)
             db.add_all([
                 PinCreative(
                     product_id=product.id, creative_type="product_focus", title=f"Etsy mockup {i}",
@@ -176,6 +184,7 @@ def test_manual_generate_is_clamped_to_remaining_capacity():
         db = SessionLocal()
         product = _product(db)
         service = AIContentService(db, MockAIContentProvider())
+        set_pipeline_enabled(db, True)
         service.generate(product, PinCreativeType.PRODUCT_FOCUS, 14, force_new=True)
         try:
             response = client.post("/creatives/generate", json={
@@ -196,6 +205,7 @@ def test_mockups_never_count_and_explicit_zero_creative_is_successful_ai():
         db = SessionLocal()
         product = _product(db)
         try:
+            set_pipeline_enabled(db, True)
             db.add(PinCreative(
                 product_id=product.id, creative_type="product_focus", title="Mockup",
                 description="Etsy source", keywords=["item"], call_to_action="View",
@@ -219,6 +229,7 @@ def test_generation_failure_releases_quota_for_retry():
         db = SessionLocal()
         product = _product(db)
         try:
+            set_pipeline_enabled(db, True)
             with pytest.raises(AIContentError):
                 AIContentService(db, BrokenProvider()).generate(
                     product, PinCreativeType.PRODUCT_FOCUS, 1, force_new=True
@@ -238,6 +249,7 @@ def test_concurrent_quota_reservations_cannot_exceed_fifteen():
         def reserve_ten(_):
             db = SessionLocal()
             try:
+                set_pipeline_enabled(db, True)
                 return len(reserve_ai_capacity(db, 10))
             finally:
                 db.close()
@@ -258,6 +270,7 @@ def test_manual_etsy_and_scheduler_demand_share_the_central_fifteen_quota():
         db = SessionLocal()
         product = _product(db)
         try:
+            set_pipeline_enabled(db, True)
             scheduler = DailyPinScheduler(db).schedule_daily(date(2035, 1, 4))
             assert scheduler.ai_jobs_created == 1
             job = db.query(PinGenerationJob).one()
@@ -282,6 +295,7 @@ def test_retry_of_completed_generation_job_does_not_create_or_count_a_duplicate(
         job = PinGenerationJob(product_id=product.id, requested_count=1, status="pending")
         db.add(job)
         db.commit()
+        set_pipeline_enabled(db, True)
         try:
             initial = AIContentService(db, MockAIContentProvider()).generate(
                 product, PinCreativeType.PRODUCT_FOCUS, 1, job_id=job.id, force_new=True

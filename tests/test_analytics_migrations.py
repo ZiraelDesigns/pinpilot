@@ -435,21 +435,29 @@ def test_nullable_metrics_persist_null_and_zero_as_distinct_values():
             engine.dispose()
 
 
-def test_pipeline_control_and_quota_tables_install_idempotently_with_default_on():
+def test_pipeline_control_and_quota_tables_install_idempotently_with_default_off():
     with tempfile.TemporaryDirectory() as directory:
         engine = create_engine(f"sqlite:///{Path(directory) / 'pipeline.db'}")
         try:
             Base.metadata.create_all(bind=engine)
             upgrade_analytics_schema(engine)
             upgrade_analytics_schema(engine)
-            with engine.connect() as connection:
+            with engine.begin() as connection:
                 tables = set(inspect(connection).get_table_names())
                 assert {"ai_pipeline_controls", "ai_daily_quota_slots"} <= tables
                 assert connection.execute(text(
                     "SELECT enabled FROM ai_pipeline_controls WHERE id=1"
-                )).scalar_one() == 1
+                )).scalar_one() == 0
                 assert connection.execute(text(
                     "SELECT COUNT(*) FROM ai_pipeline_controls"
+                )).scalar_one() == 1
+                connection.execute(text(
+                    "UPDATE ai_pipeline_controls SET enabled=1 WHERE id=1"
+                ))
+            upgrade_analytics_schema(engine)
+            with engine.connect() as connection:
+                assert connection.execute(text(
+                    "SELECT enabled FROM ai_pipeline_controls WHERE id=1"
                 )).scalar_one() == 1
         finally:
             engine.dispose()

@@ -128,7 +128,7 @@ class AIPipelineControl(Base):
     __tablename__ = "ai_pipeline_controls"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(default=False, server_default=text("0"), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_naive_now, nullable=False)
 
 

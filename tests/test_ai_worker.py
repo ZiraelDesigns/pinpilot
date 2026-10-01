@@ -6,8 +6,9 @@ import pytest
 
 from app.config import settings
 from app.database import SessionLocal
-from app.models import EtsyAccount, EtsyListing, PinCreative, PinGenerationJob, Product
+from app.models import AIPipelineControl, EtsyAccount, EtsyListing, PinCreative, PinGenerationJob, Product
 from app.services.ai_content import AIContentError, AIContentService, AIValidationError, MockAIContentProvider
+from app.services.ai_pipeline import set_pipeline_enabled
 from app.services.ai_worker import AIGenerationWorker, is_retryable_error, redact_error
 
 
@@ -32,6 +33,7 @@ def _product_with_job(db, requested_count=1):
     job = PinGenerationJob(product_id=product.id, requested_count=requested_count, status="pending")
     db.add(job)
     db.commit()
+    set_pipeline_enabled(db, True)
     return product, job
 
 
@@ -206,3 +208,41 @@ def test_empty_queue_idles_without_provider_or_database_writes():
     worker = _worker(lambda session: calls.append(session) or pytest.fail("provider must not run"))
     assert worker.process_once().claimed is False
     assert calls == []
+
+
+def test_disabled_pipeline_preserves_queued_job_without_constructing_provider():
+    db = SessionLocal()
+    try:
+        _, job = _product_with_job(db)
+        set_pipeline_enabled(db, False)
+        calls = []
+        result = _worker(lambda session: calls.append(session) or pytest.fail(
+            "provider must not be constructed while pipeline is disabled"
+        )).process_once()
+        db.refresh(job)
+        assert result.claimed is False
+        assert job.status == "pending"
+        assert job.retry_count == 0
+        assert calls == []
+    finally:
+        db.close()
+
+
+def test_missing_pipeline_state_is_recreated_disabled_and_keeps_job_queued():
+    db = SessionLocal()
+    try:
+        _, job = _product_with_job(db)
+        db.delete(db.get(AIPipelineControl, 1))
+        db.commit()
+        calls = []
+        result = _worker(lambda session: calls.append(session) or pytest.fail(
+            "provider must not run when pipeline state is missing"
+        )).process_once()
+        db.refresh(job)
+        control = db.get(AIPipelineControl, 1)
+        assert result.claimed is False
+        assert job.status == "pending"
+        assert control is None or control.enabled is False
+        assert calls == []
+    finally:
+        db.close()

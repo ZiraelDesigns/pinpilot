@@ -34,7 +34,8 @@ def utc_today() -> date:
 def ensure_pipeline_control(db: Session) -> AIPipelineControl:
     control = db.get(AIPipelineControl, 1)
     if control is None:
-        control = AIPipelineControl(id=1, enabled=True)
+        # Missing state is not operator consent to make external AI requests.
+        control = AIPipelineControl(id=1, enabled=False)
         db.add(control)
         db.flush()
     return control

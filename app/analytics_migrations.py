@@ -373,7 +373,7 @@ def upgrade_analytics_schema(engine: Engine) -> None:
     with engine.begin() as connection:
         connection.execute(text(
             "INSERT INTO ai_pipeline_controls (id, enabled, updated_at) "
-            "SELECT 1, 1, CURRENT_TIMESTAMP WHERE NOT EXISTS "
+            "SELECT 1, 0, CURRENT_TIMESTAMP WHERE NOT EXISTS "
             "(SELECT 1 FROM ai_pipeline_controls WHERE id = 1)"
         ))
     table_names = set(inspect(engine).get_table_names())
