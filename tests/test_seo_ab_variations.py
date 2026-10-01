@@ -440,3 +440,34 @@ def test_failed_quality_variant_cannot_be_sent_to_publisher():
             PinterestPublisher(db, NeverProvider()).publish_pin(
                 pin.id, account.id, seo_ab_variant_id=variant.id,
             )
+
+
+def test_over_limit_ab_snapshot_fails_existing_quality_gate_and_cannot_publish():
+    from app.models.core import PinStatus
+    from app.services.pinterest_publisher import PinterestPublishRejected, PinterestPublisher
+
+    class NeverProvider:
+        publishing_enabled = True
+
+        def publish_pin(self, _account, _request):
+            pytest.fail("over-limit A/B SEO must not reach the provider")
+
+    with SessionLocal() as db:
+        generation = _generation(db)
+        source = dict(generation.output_snapshot)
+        source["title"] = "botanical soy candle " + "ş" * 100
+        assert len(source["title"]) == 121
+        generation.output_snapshot = source
+        experiment = create_seo_ab_experiment(db, generation.id, hypothesis="Keep over-limit variant blocked")
+        variant = experiment.variants[0]
+        assert variant.quality_status == "FAIL"
+        assert "title_too_long" in variant.quality_snapshot["validation"]["failed_checks"]
+        account = PinterestAccount(account_name="A/B over-limit", account_identifier="ab-over-limit", is_active=True)
+        pin = Pin(title="Local", description="Local", status=PinStatus.SCHEDULED.value)
+        db.add_all([account, pin])
+        db.flush()
+
+        with pytest.raises(PinterestPublishRejected, match="quality-approved"):
+            PinterestPublisher(db, NeverProvider()).publish_pin(
+                pin.id, account.id, seo_ab_variant_id=variant.id,
+            )

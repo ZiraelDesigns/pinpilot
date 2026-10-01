@@ -110,6 +110,43 @@ def test_json_parsing_deduplicates_keywords():
     assert parsed.keywords.count("soy candle") == 1
 
 
+@pytest.mark.parametrize("length", [99, 100])
+def test_seo_parser_preserves_titles_at_pinterest_character_limit(length):
+    payload = _seo_response()
+    prefix = "handmade candle "
+    payload["title"] = prefix + "ş" * (length - len(prefix))
+    parsed = AIContentService._parse_generated_json(json.dumps(payload, ensure_ascii=False))
+    assert len(parsed.title) == length
+    assert parsed.title == payload["title"]
+
+
+def test_seo_parser_rejects_title_over_pinterest_character_limit_without_truncation():
+    payload = _seo_response()
+    prefix = "handmade candle "
+    payload["title"] = prefix + "ş" * (101 - len(prefix))
+    with pytest.raises(AIContentError, match="100 karakteri aşamaz"):
+        AIContentService._parse_generated_json(json.dumps(payload, ensure_ascii=False))
+    assert len(payload["title"]) == 101
+
+
+@pytest.mark.parametrize("length", [799, 800])
+def test_seo_parser_preserves_descriptions_at_pinterest_character_limit(length):
+    payload = _seo_response()
+    description = payload["description"]
+    payload["description"] = description + "ğ" * (length - len(description))
+    parsed = AIContentService._parse_generated_json(json.dumps(payload, ensure_ascii=False))
+    assert len(parsed.description) == length
+    assert parsed.description == payload["description"]
+
+
+def test_seo_parser_rejects_description_over_pinterest_character_limit():
+    payload = _seo_response()
+    description = payload["description"]
+    payload["description"] = description + "ğ" * (801 - len(description))
+    with pytest.raises(AIContentError, match="800 karakteri aşamaz"):
+        AIContentService._parse_generated_json(json.dumps(payload, ensure_ascii=False))
+
+
 def test_duplicate_request_avoids_additional_provider_calls():
     with TestClient(app):
         db = SessionLocal()

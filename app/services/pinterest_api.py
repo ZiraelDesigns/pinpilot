@@ -20,6 +20,10 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from app.config import settings
+from app.pinterest_seo_limits import (
+    PINTEREST_PIN_DESCRIPTION_MAX_LENGTH,
+    PINTEREST_PIN_TITLE_MAX_LENGTH,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,10 +154,31 @@ class PinterestCreatePinPayload(BaseModel):
             raise ValueError("alan boş olamaz")
         return value
 
+    # Pinterest's published Pin text specification is an application-level
+    # guard; it is separate from the HTTP adapter's API request/response schema.
+    @field_validator("title")
+    @classmethod
+    def enforce_title_limit(cls, value: str) -> str:
+        if len(value) > PINTEREST_PIN_TITLE_MAX_LENGTH:
+            raise ValueError(f"Pinterest Pin title exceeds {PINTEREST_PIN_TITLE_MAX_LENGTH} characters")
+        return value
+
     @field_validator("description", "alt_text")
     @classmethod
     def strip_optional_text(cls, value: str | None) -> str | None:
-        return value.strip() or None if value is not None else None
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @field_validator("description")
+    @classmethod
+    def enforce_description_limit(cls, value: str | None) -> str | None:
+        if value and len(value) > PINTEREST_PIN_DESCRIPTION_MAX_LENGTH:
+            raise ValueError(
+                f"Pinterest Pin description exceeds {PINTEREST_PIN_DESCRIPTION_MAX_LENGTH} characters"
+            )
+        return value
 
     @field_validator("link")
     @classmethod
@@ -192,6 +217,22 @@ class PinterestUpdatePinPayload(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("alan boş olamaz")
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def enforce_update_title_limit(cls, value: str | None) -> str | None:
+        if value is not None and len(value) > PINTEREST_PIN_TITLE_MAX_LENGTH:
+            raise ValueError(f"Pinterest Pin title exceeds {PINTEREST_PIN_TITLE_MAX_LENGTH} characters")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def enforce_update_description_limit(cls, value: str | None) -> str | None:
+        if value is not None and len(value) > PINTEREST_PIN_DESCRIPTION_MAX_LENGTH:
+            raise ValueError(
+                f"Pinterest Pin description exceeds {PINTEREST_PIN_DESCRIPTION_MAX_LENGTH} characters"
+            )
         return value
 
     @field_validator("link")

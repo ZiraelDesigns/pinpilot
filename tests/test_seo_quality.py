@@ -1,5 +1,6 @@
 from datetime import datetime
 
+import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.database import SessionLocal
@@ -67,6 +68,48 @@ def test_high_quality_seo_has_explainable_deterministic_score_and_passes_validat
     assert result["validation"]["status"] == "PASS"
     assert result["validation"]["failed_checks"] == []
     assert result["validation"]["validation_version"] == SEO_VALIDATION_VERSION
+    assert "title_within_pinterest_limit" in result["validation"]["passed_checks"]
+    assert "description_within_pinterest_limit" in result["validation"]["passed_checks"]
+
+
+@pytest.mark.parametrize("length", [99, 100])
+def test_title_pinterest_limit_accepts_boundary_and_unicode(length):
+    prefix = "botanical soy candle "
+    title = prefix + "ş" * (length - len(prefix))
+    snapshot, intelligence = _quality_inputs(title=title)
+    result = calculate_seo_quality(snapshot, intelligence)
+    assert "title_too_long" not in result["validation"]["failed_checks"]
+    assert "title_within_pinterest_limit" in result["validation"]["passed_checks"]
+
+
+def test_title_above_pinterest_limit_fails_validation_and_score_gate():
+    prefix = "botanical soy candle "
+    title = prefix + "ş" * (101 - len(prefix))
+    snapshot, intelligence = _quality_inputs(title=title)
+    result = calculate_seo_quality(snapshot, intelligence)
+    assert result["validation"]["status"] == "FAIL"
+    assert "title_too_long" in result["validation"]["failed_checks"]
+    assert "title_within_pinterest_limit" not in result["validation"]["passed_checks"]
+
+
+@pytest.mark.parametrize("length", [799, 800])
+def test_description_pinterest_limit_accepts_boundary_and_unicode(length):
+    snapshot, intelligence = _quality_inputs()
+    description = snapshot["description"]
+    snapshot["description"] = description + "ğ" * (length - len(description))
+    result = calculate_seo_quality(snapshot, intelligence)
+    assert "description_too_long" not in result["validation"]["failed_checks"]
+    assert "description_within_pinterest_limit" in result["validation"]["passed_checks"]
+
+
+def test_description_above_pinterest_limit_fails_validation_and_score_gate():
+    snapshot, intelligence = _quality_inputs()
+    description = snapshot["description"]
+    snapshot["description"] = description + "ğ" * (801 - len(description))
+    result = calculate_seo_quality(snapshot, intelligence)
+    assert result["validation"]["status"] == "FAIL"
+    assert "description_too_long" in result["validation"]["failed_checks"]
+    assert "description_within_pinterest_limit" not in result["validation"]["passed_checks"]
 
 
 def test_missing_title_description_and_primary_produce_fail_errors():

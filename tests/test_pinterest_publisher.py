@@ -327,6 +327,25 @@ def test_disabled_production_provider_fails_closed_without_creating_intent(db):
     assert pin.status == PinStatus.SCHEDULED.value
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("title", "T" * 101), ("description", "D" * 801)],
+)
+def test_over_limit_seo_payload_is_rejected_before_intent_or_provider(db, field, value):
+    pin = _pin(db)
+    setattr(pin, field, value)
+    db.commit()
+    account = _account(db, f"over-limit-{field}")
+    provider = FakePinterestProvider()
+
+    with pytest.raises(PinterestPublishRejected, match="karakteri aşamaz"):
+        PinterestPublisher(db, provider).publish_pin(pin.id, account.id)
+
+    assert provider.requests == []
+    assert db.query(PinterestPublishIntent).count() == 0
+    assert db.query(PublishedPinterestPin).count() == 0
+
+
 def test_disconnect_keeps_publication_and_intent_idempotency_history(db):
     pin = _pin(db)
     account = _account(db, "disconnect-business")

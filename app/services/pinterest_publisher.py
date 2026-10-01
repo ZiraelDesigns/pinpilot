@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.pinterest_seo_limits import pinterest_seo_limit_violations
 from app.models import (
     Pin,
     PinterestAccount,
@@ -257,6 +258,11 @@ class PinterestPublisher:
             if source_generation.product_id is not None and pin.product_id != source_generation.product_id:
                 raise PinterestPublishRejected("The variant source generation does not belong to this local Pin product.")
 
+        publish_title = (variant.output_snapshot.get("title") if variant else None) or pin.title
+        publish_description = (
+            variant.output_snapshot.get("description") if variant else pin.description
+        )
+
         intent = self.db.scalar(select(PinterestPublishIntent).where(
             PinterestPublishIntent.pin_id == pin.id,
             PinterestPublishIntent.account_identifier_snapshot == account.account_identifier,
@@ -274,6 +280,7 @@ class PinterestPublisher:
                 return legacy_publication
             if not self._pin_is_publishable(pin):
                 raise PinterestPublishingError("Only a locally scheduled Pin can be published.")
+            self._validate_seo_text(publish_title, publish_description)
         if intent is not None:
             if intent.seo_ab_variant_id != seo_ab_variant_id:
                 raise PinterestPublishingError("A Pin publish intent cannot be reused for a different SEO variant.")
@@ -308,6 +315,7 @@ class PinterestPublisher:
                 raise PinterestPublishingError("A failed Pin publish retry must use the original board selection.")
             if not self._pin_is_publishable(pin):
                 raise PinterestPublishingError("Only a locally scheduled Pin can be retried.")
+            self._validate_seo_text(publish_title, publish_description)
             claim = self.db.execute(
                 update(PinterestPublishIntent)
                 .where(
@@ -352,8 +360,8 @@ class PinterestPublisher:
 
         request = PinterestPinPublishRequest(
             idempotency_key=intent.idempotency_key,
-            title=(variant.output_snapshot.get("title") if variant else None) or pin.title,
-            description=(variant.output_snapshot.get("description") if variant else pin.description),
+            title=publish_title,
+            description=publish_description,
             image_reference=pin.image_path,
             destination_url=pin.destination_url,
             board_external_id=board.board_id if board else None,
@@ -501,3 +509,11 @@ class PinterestPublisher:
         return self.db.scalar(select(PublishedPinterestPin.id).where(
             PublishedPinterestPin.pin_id == pin.id,
         ).limit(1)) is not None
+
+    @staticmethod
+    def _validate_seo_text(title: str | None, description: str | None) -> None:
+        limit_errors = pinterest_seo_limit_violations(title, description)
+        if limit_errors:
+            # Keep the original text intact for correction/audit and reject
+            # before claiming a new/retry intent or invoking any provider.
+            raise PinterestPublishRejected(" ".join(item["message"] for item in limit_errors))

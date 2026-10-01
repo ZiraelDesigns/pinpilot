@@ -56,6 +56,36 @@ def test_create_pin_payload_is_typed_and_uses_documented_image_url_shape():
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "maximum", "over_limit"),
+    [("title", 100, 101), ("description", 800, 801)],
+)
+def test_create_pin_payload_enforces_pinterest_text_limits(field, maximum, over_limit):
+    base = {
+        "board_id": "board-123",
+        "title": "ğ" * 99,
+        "description": "İ" * 799,
+        "media_source": {"source_type": "image_url", "url": "https://cdn.example.test/pin.png"},
+    }
+    base[field] = "ğ" * maximum
+    payload = PinterestCreatePinPayload(**base)
+    assert len(getattr(payload, field)) == maximum
+    base[field] = "ğ" * over_limit
+    with pytest.raises(ValidationError):
+        PinterestCreatePinPayload(**base)
+
+
+@pytest.mark.parametrize(
+    ("field", "maximum"), [("title", 100), ("description", 800)],
+)
+def test_update_pin_payload_enforces_pinterest_text_limits(field, maximum):
+    from app.services.pinterest_api import PinterestUpdatePinPayload
+
+    assert len(getattr(PinterestUpdatePinPayload(**{field: "ğ" * maximum}), field)) == maximum
+    with pytest.raises(ValidationError):
+        PinterestUpdatePinPayload(**{field: "ğ" * (maximum + 1)})
+
+
 def test_api_base_url_allows_only_official_production_and_sandbox_hosts():
     assert PinterestApiClient("token", base_url="https://api-sandbox.pinterest.com/v5").base_url == (
         "https://api-sandbox.pinterest.com/v5"

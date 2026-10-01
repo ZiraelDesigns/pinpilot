@@ -15,6 +15,7 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.pinterest_seo_limits import pinterest_seo_limit_violations
 from app.models import EtsyListing, PinCreative, PinGenerationJob, Product, SEOGeneration
 from app.models.core import PinCreativeSourceType, PinCreativeStatus, PinCreativeType
 from app.services.ai_pipeline import (
@@ -1041,11 +1042,16 @@ class AIContentService:
             "search_intents": list(dict.fromkeys(intents)),
             "creative_angle": angle.strip(),
         }
+        title = data["title"].strip()
+        description = data["description"].strip()
+        limit_errors = pinterest_seo_limit_violations(title, description)
+        if limit_errors:
+            raise AIValidationError(" ".join(item["message"] for item in limit_errors))
         AIContentService._validate_seo_grounding(data, seo_metadata, context, creative_type)
 
         return GeneratedCreative(
-            title=data["title"].strip()[:255],
-            description=data["description"].strip(),
+            title=title,
+            description=description,
             keywords=keywords,
             call_to_action=data["call_to_action"].strip()[:255],
             seo_metadata=seo_metadata,

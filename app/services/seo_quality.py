@@ -10,11 +10,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import SEOGeneration, SEOKeywordIntelligence, SEOQualityAssessment
+from app.pinterest_seo_limits import (
+    PINTEREST_PIN_DESCRIPTION_MAX_LENGTH,
+    PINTEREST_PIN_TITLE_MAX_LENGTH,
+    pinterest_seo_limit_violations,
+)
 from app.services.keyword_intelligence import normalize_keyword
 
 
-SEO_SCORE_VERSION = "seo_full_score_v1"
-SEO_VALIDATION_VERSION = "seo_validation_v1"
+SEO_SCORE_VERSION = "seo_full_score_v2"
+SEO_VALIDATION_VERSION = "seo_validation_v2"
 _CORE_TYPES = {"PRIMARY", "SECONDARY", "LONG_TAIL"}
 
 
@@ -106,7 +111,11 @@ def calculate_seo_quality(
         len(core_keyword_tokens & set(title_tokens)) / len(core_keyword_tokens)
         if core_keyword_tokens else 0
     )
-    title_length_signal = 100 if 15 <= len(title.strip()) <= 255 else (50 if title.strip() else 0)
+    title_length = len(title.strip())
+    title_length_signal = (
+        100 if 15 <= title_length <= PINTEREST_PIN_TITLE_MAX_LENGTH
+        else (50 if 0 < title_length <= PINTEREST_PIN_TITLE_MAX_LENGTH else 0)
+    )
     title_score = _clamp_score(
         (100 if title.strip() else 0) * 0.25
         + (100 if primary_in_title else 0) * 0.35
@@ -126,7 +135,10 @@ def calculate_seo_quality(
         (100 if description.strip() else 0) * 0.25
         + description_coverage * 100 * 0.30
         + min(100, description_diversity * 125) * 0.20
-        + (100 if len(description.strip()) >= 40 else (50 if description.strip() else 0)) * 0.15
+        + (
+            100 if 40 <= len(description.strip()) <= PINTEREST_PIN_DESCRIPTION_MAX_LENGTH
+            else (50 if 0 < len(description.strip()) <= PINTEREST_PIN_DESCRIPTION_MAX_LENGTH else 0)
+        ) * 0.15
         + (100 if cta.strip() else 0) * 0.10
     )
 
@@ -264,6 +276,8 @@ def calculate_seo_quality(
         errors.append({"code": "missing_description", "message": "SEO açıklaması boş."})
     if not primary.strip():
         errors.append({"code": "missing_primary_keyword", "message": "Primary keyword eksik."})
+    limit_violations = pinterest_seo_limit_violations(title.strip(), description.strip())
+    errors.extend(limit_violations)
     if primary.strip() and title.strip() and not primary_in_title:
         errors.append({"code": "title_primary_keyword_mismatch", "message": "Başlık primary keyword ile eşleşmiyor."})
     for field, values in (
@@ -281,8 +295,12 @@ def calculate_seo_quality(
     passed_checks = []
     if title.strip():
         passed_checks.append("title_present")
+    if title.strip() and len(title.strip()) <= PINTEREST_PIN_TITLE_MAX_LENGTH:
+        passed_checks.append("title_within_pinterest_limit")
     if description.strip():
         passed_checks.append("description_present")
+    if description.strip() and len(description.strip()) <= PINTEREST_PIN_DESCRIPTION_MAX_LENGTH:
+        passed_checks.append("description_within_pinterest_limit")
     if primary.strip():
         passed_checks.append("primary_keyword_present")
     if primary_in_title:
