@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services.ai_pipeline import dashboard_pipeline_status, set_pipeline_enabled
+from app.security import require_admin_csrf
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
@@ -19,7 +20,7 @@ def status(db: Session = Depends(get_db)):
     return result
 
 
-@router.post("/toggle")
+@router.post("/toggle", dependencies=[Depends(require_admin_csrf)])
 def toggle(payload: PipelineToggleRequest, db: Session = Depends(get_db)):
     control = set_pipeline_enabled(db, payload.enabled)
     return {"enabled": control.enabled, **dashboard_pipeline_status(db)}

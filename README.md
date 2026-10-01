@@ -12,6 +12,21 @@ Use the project virtual environment:
 
 Open `http://127.0.0.1:8000/` for the dashboard and `http://127.0.0.1:8000/health` for health status.
 
+## Dashboard administrator access
+
+The dashboard's existing read-only views remain available without signing in.
+All state-changing browser/API operations require the configured single admin
+session and a CSRF token. Before enabling dashboard mutations, provide
+`APP_AUTH_USERNAME`, `APP_AUTH_PASSWORD` (at least 16 characters), and
+`APP_SESSION_SECRET_KEY` (at least 32 bytes) through the deployment's protected
+environment/secret store. The application does not generate or print secrets;
+missing or invalid settings deny login and protected operations. Sessions expire
+after `APP_SESSION_TTL_SECONDS` (default eight hours) and use HttpOnly,
+SameSite=Lax cookies; `APP_SESSION_COOKIE_SECURE` defaults to `true`, so a
+working HTTPS deployment is required for browser sessions. OAuth provider
+callbacks remain protected by their existing single-use server-side OAuth
+state checks.
+
 ## Etsy bağlantısı (read-only)
 
 PinPilot Etsy Open API v3 için OAuth 2.0 Authorization Code + PKCE akışını destekler. Bağlantı yalnızca mağaza ve aktif listing verilerini okumak içindir; Etsy'ye hiçbir veri yazılmaz veya değiştirilmez.

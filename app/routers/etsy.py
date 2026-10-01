@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import EtsyAccount
 from app.services.etsy import EtsyApiService, EtsyIntegrationError, EtsyOAuthService, EtsyTokenService
+from app.security import require_admin_csrf
 
 router = APIRouter(prefix="/etsy", tags=["etsy"])
 
@@ -16,7 +17,7 @@ def _dashboard_redirect(message: str, error: bool = False) -> RedirectResponse:
     return RedirectResponse(url=f"/?{urlencode({key: message})}", status_code=303)
 
 
-@router.get("/connect")
+@router.post("/connect", dependencies=[Depends(require_admin_csrf)])
 def connect(db: Session = Depends(get_db)):
     try:
         return RedirectResponse(EtsyOAuthService(db).authorization_url(), status_code=302)
@@ -61,7 +62,7 @@ def callback(
         return _dashboard_redirect(str(exc) if isinstance(exc, EtsyIntegrationError) else "Etsy yanıtı geçersiz.", error=True)
 
 
-@router.post("/sync")
+@router.post("/sync", dependencies=[Depends(require_admin_csrf)])
 def sync(db: Session = Depends(get_db)):
     account = db.query(EtsyAccount).filter_by(is_active=True).first()
     if not account:
@@ -73,7 +74,7 @@ def sync(db: Session = Depends(get_db)):
         return _dashboard_redirect(str(exc), error=True)
 
 
-@router.post("/disconnect")
+@router.post("/disconnect", dependencies=[Depends(require_admin_csrf)])
 def disconnect(db: Session = Depends(get_db)):
     account = db.query(EtsyAccount).filter_by(is_active=True).first()
     if not account:

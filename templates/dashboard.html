@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>PinPilot Kontrol Paneli</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
@@ -10,6 +11,9 @@
     <main>
       <h1>PinPilot</h1>
       <p class="subtitle">Yerel kontrol paneli</p>
+      {% if authenticated %}
+        <form method="post" action="/auth/logout" class="dashboard-auth-action"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="secondary" type="submit">Çıkış yap</button></form>
+      {% else %}<p class="notice">Kontrol işlemleri için <a href="/auth/login">yönetici girişi</a> yapın. Bu görünüm salt okunurdur.</p>{% endif %}
       <section class="cards" aria-label="Kontrol paneli sayıları">
         <article><span>Ürünler</span><strong id="products-count">{{ counts.products }}</strong></article>
         <article><span>Oluşturulan Pinler</span><strong id="generated-pins-count">{{ counts.generated_pins }}</strong></article>
@@ -121,7 +125,7 @@
           <article><span>Etsy mockup kreatifleri</span><strong id="pipeline-mockup-creatives">{{ pipeline_status.mockup_creatives }}</strong></article>
           <article><span>AI kreatifleri</span><strong id="pipeline-ai-creatives">{{ pipeline_status.ai_creatives }}</strong></article>
         </section>
-        <button id="ai-pipeline-toggle" type="button" data-enabled="{{ 'true' if pipeline_status.enabled else 'false' }}">AI Pipeline'ı {{ 'kapat' if pipeline_status.enabled else 'aç' }}</button>
+        <button id="ai-pipeline-toggle" type="button" data-enabled="{{ 'true' if pipeline_status.enabled else 'false' }}" data-csrf="{{ csrf_token }}" {% if not authenticated %}disabled{% endif %}>AI Pipeline'ı {{ 'kapat' if pipeline_status.enabled else 'aç' }}</button>
         <p>Etsy mockup kreatifleri günlük 15 AI kreatif kotasına dahil değildir. Kota, başarılı AI kreatif üretimlerini UTC gününe göre sayar.</p>
         <p id="ai-pipeline-toggle-result" class="notice" hidden></p>
       </section>
@@ -149,10 +153,11 @@
         <h2>Pin fikirleri oluştur</h2>
         {% if products %}
           <form id="creative-generate-form">
-            <label>Ürün <select name="product_id">{% for product in products %}<option value="{{ product.id }}">{{ product.title }}</option>{% endfor %}</select></label>
-            <label>Kreatif türü <select name="creative_type"><option value="product_focus">Ürün odaklı</option><option value="lifestyle">Yaşam tarzı</option><option value="problem_solution">Sorun ve çözüm</option><option value="gift_idea">Hediye fikri</option><option value="minimalist">Minimalist</option></select></label>
-            <label>Hedef adet <select name="desired_count">{% for count in range(1, 6) %}<option value="{{ count }}">{{ count }}</option>{% endfor %}</select></label>
-            <button type="submit">Kreatif oluştur</button>
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <label>Ürün <select name="product_id" {% if not authenticated %}disabled{% endif %}>{% for product in products %}<option value="{{ product.id }}">{{ product.title }}</option>{% endfor %}</select></label>
+            <label>Kreatif türü <select name="creative_type" {% if not authenticated %}disabled{% endif %}><option value="product_focus">Ürün odaklı</option><option value="lifestyle">Yaşam tarzı</option><option value="problem_solution">Sorun ve çözüm</option><option value="gift_idea">Hediye fikri</option><option value="minimalist">Minimalist</option></select></label>
+            <label>Hedef adet <select name="desired_count" {% if not authenticated %}disabled{% endif %}>{% for count in range(1, 6) %}<option value="{{ count }}">{{ count }}</option>{% endfor %}</select></label>
+            <button type="submit" {% if not authenticated %}disabled{% endif %}>Kreatif oluştur</button>
           </form>
           <p id="creative-generation-result" class="notice" hidden></p>
         {% else %}<p>Kreatif üretmek için önce Etsy ürün ilanlarını eşitleyin veya bir ürün ekleyin.</p>{% endif %}
@@ -163,15 +168,15 @@
         {% if pinterest_error %}<p class="notice error">{{ pinterest_error }}</p>{% endif %}
         {% if pinterest_account %}
           <p><strong>Bağlı:</strong> {{ pinterest_account.account_name }}</p>
-          <form method="post" action="/pinterest/boards/sync"><button type="submit">Pinterest panolarını eşitle</button></form>
-          <form method="post" action="/pinterest/disconnect"><button class="secondary" type="submit">Pinterest bağlantısını kaldır</button></form>
+          <form method="post" action="/pinterest/boards/sync"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button type="submit" {% if not authenticated %}disabled{% endif %}>Pinterest panolarını eşitle</button></form>
+          <form method="post" action="/pinterest/disconnect"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="secondary" type="submit" {% if not authenticated %}disabled{% endif %}>Pinterest bağlantısını kaldır</button></form>
           <p><a href="/pinterest/boards">Pano API görünümü</a></p>
           {% if pinterest_boards %}
             <ul class="board-list">{% for board in pinterest_boards %}<li><code>{{ board.board_id }}</code> — {{ board.name }}</li>{% endfor %}</ul>
           {% else %}<p>Henüz yerel pano kaydı yok.</p>{% endif %}
         {% else %}
           <p>Henüz Pinterest Business hesabı bağlı değil.</p>
-          <a class="button" href="/pinterest/connect">Pinterest'e bağlan</a>
+          <form method="post" action="/pinterest/connect"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button type="submit" {% if not authenticated %}disabled{% endif %}>Pinterest'e bağlan</button></form>
         {% endif %}
       </section>
       <section class="etsy-connection" aria-label="Etsy bağlantısı">
@@ -181,11 +186,11 @@
         {% if etsy_account %}
           <p><strong>Bağlı:</strong> {{ etsy_account.shop_name }}</p>
           {% if etsy_sync_run %}<p><small><strong>Son Etsy eşitlemesi:</strong> {{ etsy_sync_run.finished_at or etsy_sync_run.started_at }} · {{ {'success': 'Başarılı', 'failed': 'Başarısız', 'running': 'Çalışıyor'}.get(etsy_sync_run.status, etsy_sync_run.status) }} · {{ etsy_sync_run.processed_listings }} ürün ilanı · {{ etsy_sync_run.new_products }} yeni · {{ etsy_sync_run.changed_products }} güncellenen · {{ etsy_sync_run.new_mockup_creatives }} yeni mockup{% if etsy_sync_run.error_message %} · {{ etsy_sync_run.error_message }}{% endif %}</small></p>{% else %}<p><small>Henüz Etsy eşitlemesi yapılmadı.</small></p>{% endif %}
-          <form method="post" action="/etsy/sync"><button type="submit">Etsy ilanlarını eşitle</button></form>
-          <form method="post" action="/etsy/disconnect"><button class="secondary" type="submit">Etsy bağlantısını kaldır</button></form>
+          <form method="post" action="/etsy/sync"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button type="submit" {% if not authenticated %}disabled{% endif %}>Etsy ilanlarını eşitle</button></form>
+          <form method="post" action="/etsy/disconnect"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="secondary" type="submit" {% if not authenticated %}disabled{% endif %}>Etsy bağlantısını kaldır</button></form>
         {% else %}
           <p>Henüz Etsy hesabı bağlı değil.</p>
-          <a class="button" href="/etsy/connect">Etsy'ye bağlan</a>
+          <form method="post" action="/etsy/connect"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button type="submit" {% if not authenticated %}disabled{% endif %}>Etsy'ye bağlan</button></form>
         {% endif %}
       </section>
     </main>
@@ -208,8 +213,8 @@
                   <p>{{ creative.description }}</p>
                   {% if creative.seo_metadata %}<p><small><strong>Birincil anahtar kelime:</strong> {{ creative.seo_metadata.primary_keyword }} · <strong>Yaratıcı yaklaşım:</strong> {{ creative.seo_metadata.creative_angle }}</small></p>{% endif %}
                   <p><small>{{ creative.keywords | join(', ') }}</small></p><p><em>{{ creative.call_to_action }}</em></p>
-                  <form method="post" action="/creatives/{{ creative.id }}/approve"><button type="submit">Onayla</button></form><button class="secondary edit-creative" type="button">Düzenle</button><form method="post" action="/creatives/{{ creative.id }}/delete"><button class="secondary" type="submit">Sil</button></form>
-                  <form class="creative-edit-form" hidden><label>Başlık <input name="title" value="{{ creative.title }}"></label><label>Açıklama <textarea name="description">{{ creative.description }}</textarea></label><label>Anahtar kelimeler <input name="keywords" value="{{ creative.keywords | join(', ') }}"></label><label>Harekete geçirici mesaj <input name="call_to_action" value="{{ creative.call_to_action }}"></label><button type="submit">Kaydet</button></form>
+                  <form method="post" action="/creatives/{{ creative.id }}/approve"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button type="submit" {% if not authenticated %}disabled{% endif %}>Onayla</button></form><button class="secondary edit-creative" type="button" {% if not authenticated %}disabled{% endif %}>Düzenle</button><form method="post" action="/creatives/{{ creative.id }}/delete"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="secondary" type="submit" {% if not authenticated %}disabled{% endif %}>Sil</button></form>
+                  <form class="creative-edit-form" hidden><input type="hidden" name="_csrf" value="{{ csrf_token }}"><label>Başlık <input name="title" value="{{ creative.title }}" {% if not authenticated %}disabled{% endif %}></label><label>Açıklama <textarea name="description" {% if not authenticated %}disabled{% endif %}>{{ creative.description }}</textarea></label><label>Anahtar kelimeler <input name="keywords" value="{{ creative.keywords | join(', ') }}" {% if not authenticated %}disabled{% endif %}></label><label>Harekete geçirici mesaj <input name="call_to_action" value="{{ creative.call_to_action }}" {% if not authenticated %}disabled{% endif %}></label><button type="submit" {% if not authenticated %}disabled{% endif %}>Kaydet</button></form>
                 </div>
               </details>
             </article>{% endfor %}
@@ -220,6 +225,7 @@
     <button id="page-scroll-toggle" class="page-scroll-toggle" type="button" aria-label="Sayfanın altına git" title="Sayfanın altına git"><span aria-hidden="true">↓</span></button>
   </body>
   <script>
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const generatedCreativesDialog = document.getElementById('generated-creatives-dialog');
     document.getElementById('generated-creatives-open')?.addEventListener('click', () => generatedCreativesDialog.showModal());
     document.getElementById('generated-creatives-close')?.addEventListener('click', () => generatedCreativesDialog.close());
@@ -240,9 +246,9 @@
     window.addEventListener('scroll', updatePageScrollToggle, {passive: true});
     window.addEventListener('resize', updatePageScrollToggle);
     updatePageScrollToggle();
-    document.getElementById('ai-pipeline-toggle')?.addEventListener('click', async (event) => { const button = event.currentTarget; const enabled = button.dataset.enabled !== 'true'; button.disabled = true; try { const response = await fetch('/pipeline/toggle', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled})}); const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Pipeline durumunu kaydetme başarısız.'); location.reload(); } catch (error) { const result = document.getElementById('ai-pipeline-toggle-result'); result.hidden = false; result.textContent = error.message; button.disabled = false; } });
-    document.getElementById('creative-generate-form')?.addEventListener('submit', async (event) => { event.preventDefault(); const form = event.currentTarget; const result = document.getElementById('creative-generation-result'); const payload = Object.fromEntries(new FormData(form)); payload.product_id = Number(payload.product_id); payload.desired_count = Number(payload.desired_count); const response = await fetch('/creatives/generate', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)}); const data = await response.json(); result.hidden = false; result.textContent = data.message || data.detail || 'İşlem tamamlanamadı.'; if (response.ok && data.created) location.reload(); });
+    document.getElementById('ai-pipeline-toggle')?.addEventListener('click', async (event) => { const button = event.currentTarget; const enabled = button.dataset.enabled !== 'true'; button.disabled = true; try { const response = await fetch('/pipeline/toggle', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken}, body: JSON.stringify({enabled})}); const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Pipeline durumunu kaydetme başarısız.'); location.reload(); } catch (error) { const result = document.getElementById('ai-pipeline-toggle-result'); result.hidden = false; result.textContent = error.message; button.disabled = false; } });
+    document.getElementById('creative-generate-form')?.addEventListener('submit', async (event) => { event.preventDefault(); const form = event.currentTarget; const result = document.getElementById('creative-generation-result'); const payload = Object.fromEntries(new FormData(form)); delete payload._csrf; payload.product_id = Number(payload.product_id); payload.desired_count = Number(payload.desired_count); const response = await fetch('/creatives/generate', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken}, body: JSON.stringify(payload)}); const data = await response.json(); result.hidden = false; result.textContent = data.message || data.detail || 'İşlem tamamlanamadı.'; if (response.ok && data.created) location.reload(); });
     document.querySelectorAll('.edit-creative').forEach(button => button.addEventListener('click', () => { button.parentElement.querySelector('.creative-edit-form').hidden = false; }));
-    document.querySelectorAll('.creative-edit-form').forEach(form => form.addEventListener('submit', async (event) => { event.preventDefault(); const card = form.closest('[data-creative-id]'); const raw = Object.fromEntries(new FormData(form)); raw.keywords = raw.keywords.split(',').map(item => item.trim()).filter(Boolean); const response = await fetch(`/creatives/${card.dataset.creativeId}`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(raw)}); if (response.ok) location.reload(); }));
+    document.querySelectorAll('.creative-edit-form').forEach(form => form.addEventListener('submit', async (event) => { event.preventDefault(); const card = form.closest('[data-creative-id]'); const raw = Object.fromEntries(new FormData(form)); delete raw._csrf; raw.keywords = raw.keywords.split(',').map(item => item.trim()).filter(Boolean); const response = await fetch(`/creatives/${card.dataset.creativeId}`, {method: 'PATCH', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken}, body: JSON.stringify(raw)}); if (response.ok) location.reload(); }));
   </script>
 </html>

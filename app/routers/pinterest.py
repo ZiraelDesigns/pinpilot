@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import PinterestAccount, PinterestBoard
 from app.services.pinterest import PinterestApiService, PinterestIntegrationError, PinterestOAuthService, PinterestTokenService
+from app.security import require_admin_csrf
 
 router = APIRouter(prefix="/pinterest", tags=["pinterest"])
 
@@ -16,7 +17,7 @@ def _dashboard_redirect(message: str, error: bool = False) -> RedirectResponse:
     return RedirectResponse(url=f"/?{urlencode({key: message})}", status_code=303)
 
 
-@router.get("/connect")
+@router.post("/connect", dependencies=[Depends(require_admin_csrf)])
 def connect(db: Session = Depends(get_db)):
     try:
         return RedirectResponse(PinterestOAuthService(db).authorization_url(), status_code=302)
@@ -60,7 +61,7 @@ def callback(
         return _dashboard_redirect(str(exc) if isinstance(exc, PinterestIntegrationError) else "Pinterest yanıtı geçersiz.", error=True)
 
 
-@router.post("/boards/sync")
+@router.post("/boards/sync", dependencies=[Depends(require_admin_csrf)])
 def sync_boards(db: Session = Depends(get_db)):
     account = db.query(PinterestAccount).filter_by(is_active=True).first()
     if not account:
@@ -81,7 +82,7 @@ def list_boards(db: Session = Depends(get_db)) -> JSONResponse:
     return JSONResponse({"items": [{"id": board.board_id, "name": board.name} for board in boards]})
 
 
-@router.post("/disconnect")
+@router.post("/disconnect", dependencies=[Depends(require_admin_csrf)])
 def disconnect(db: Session = Depends(get_db)):
     account = db.query(PinterestAccount).filter_by(is_active=True).first()
     if not account:

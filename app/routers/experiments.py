@@ -19,6 +19,7 @@ from app.services.experiments import (
     experiment_summaries,
     transition_experiment,
 )
+from app.security import require_admin_csrf
 
 
 router = APIRouter(prefix="/experiments", tags=["experiments"])
@@ -143,7 +144,7 @@ def _input_error(exc: ExperimentInputError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
-@router.post("", response_model=ExperimentOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ExperimentOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin_csrf)])
 def create(payload: ExperimentCreate, db: Session = Depends(get_db)):
     try:
         return create_experiment(db, **payload.model_dump())
@@ -151,7 +152,7 @@ def create(payload: ExperimentCreate, db: Session = Depends(get_db)):
         raise _input_error(exc) from exc
 
 
-@router.post("/{experiment_id}/variants", response_model=VariantOut, status_code=status.HTTP_201_CREATED)
+@router.post("/{experiment_id}/variants", response_model=VariantOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin_csrf)])
 def create_variant(experiment_id: int, payload: VariantCreate, db: Session = Depends(get_db)):
     try:
         return add_variant(db, experiment_id, **payload.model_dump())
@@ -159,7 +160,7 @@ def create_variant(experiment_id: int, payload: VariantCreate, db: Session = Dep
         raise _input_error(exc) from exc
 
 
-@router.patch("/{experiment_id}/status", response_model=ExperimentOut)
+@router.patch("/{experiment_id}/status", response_model=ExperimentOut, dependencies=[Depends(require_admin_csrf)])
 def update_status(experiment_id: int, payload: TransitionRequest, db: Session = Depends(get_db)):
     try:
         return transition_experiment(db, experiment_id, payload.target_status)
@@ -167,7 +168,7 @@ def update_status(experiment_id: int, payload: TransitionRequest, db: Session = 
         raise _input_error(exc) from exc
 
 
-@router.post("/{experiment_id}/assignments", response_model=AssignmentOut, status_code=status.HTTP_201_CREATED)
+@router.post("/{experiment_id}/assignments", response_model=AssignmentOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin_csrf)])
 def create_assignment(experiment_id: int, payload: AssignmentCreate, db: Session = Depends(get_db)):
     try:
         return assign_target(db, experiment_id=experiment_id, **payload.model_dump())
@@ -222,7 +223,7 @@ def get_detail(experiment_id: int, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/{experiment_id}/evaluations")
+@router.post("/{experiment_id}/evaluations", dependencies=[Depends(require_admin_csrf)])
 def evaluate(experiment_id: int, payload: EvaluationCreate, db: Session = Depends(get_db)):
     try:
         evaluation, variants = evaluate_experiment(db, experiment_id, **payload.model_dump())

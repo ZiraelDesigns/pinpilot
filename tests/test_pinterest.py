@@ -24,7 +24,7 @@ def _configure_pinterest(monkeypatch):
 def test_authorization_redirect_uses_state_and_requested_scopes(monkeypatch):
     _configure_pinterest(monkeypatch)
     with TestClient(app) as client:
-        response = client.get("/pinterest/connect", follow_redirects=False)
+        response = client.post("/pinterest/connect", follow_redirects=False)
 
     query = parse_qs(urlparse(response.headers["location"]).query)
     assert response.status_code == 302
@@ -104,7 +104,7 @@ def test_callback_uses_mocked_pinterest_responses_without_network(monkeypatch):
         lambda *_: {"username": "mock-business", "business_name": "Mock Business"},
     )
     with TestClient(app) as client:
-        connect = client.get("/pinterest/connect", follow_redirects=False)
+        connect = client.post("/pinterest/connect", follow_redirects=False)
         state = parse_qs(urlparse(connect.headers["location"]).query)["state"][0]
         callback = client.get(f"/pinterest/callback?code=mock-code&state={state}", follow_redirects=False)
 

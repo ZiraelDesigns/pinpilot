@@ -11,6 +11,12 @@ class Settings(BaseSettings):
 
     app_name: str = "PinPilot"
     database_url: str = "sqlite:///./pinpilot.db"
+    # Mutating dashboard/API access is disabled until all admin auth settings exist.
+    app_auth_username: str | None = None
+    app_auth_password: str | None = None
+    app_session_secret_key: str | None = None
+    app_session_ttl_seconds: int = 28800
+    app_session_cookie_secure: bool = True
     etsy_api_key: str | None = None
     etsy_shared_secret: str | None = None
     etsy_redirect_uri: str | None = None

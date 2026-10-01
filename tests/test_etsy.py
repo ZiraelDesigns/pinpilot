@@ -18,7 +18,7 @@ def _configure_etsy(monkeypatch):
 def test_authorization_redirect_uses_pkce_and_minimal_scopes(monkeypatch):
     _configure_etsy(monkeypatch)
     with TestClient(app) as client:
-        response = client.get("/etsy/connect", follow_redirects=False)
+        response = client.post("/etsy/connect", follow_redirects=False)
 
     assert response.status_code == 302
     assert response.headers["location"].startswith("https://www.etsy.com/oauth/connect?")
@@ -71,7 +71,7 @@ def test_callback_uses_mocked_etsy_responses_without_network(monkeypatch):
     )
     monkeypatch.setattr(EtsyApiService, "fetch_shop", lambda *_: {"shop_id": 456, "shop_name": "Mock Etsy Shop"})
     with TestClient(app) as client:
-        connect = client.get("/etsy/connect", follow_redirects=False)
+        connect = client.post("/etsy/connect", follow_redirects=False)
         state = parse_qs(urlparse(connect.headers["location"]).query)["state"][0]
         callback = client.get(f"/etsy/callback?code=mock-code&state={state}", follow_redirects=False)
 

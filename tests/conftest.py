@@ -17,10 +17,24 @@ os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DATABASE.as_posix()}"
 os.environ["AI_PROVIDER"] = "mock"
 os.environ["AI_IMAGE_PROVIDER"] = "mock"
 os.environ["PINTEREST_ANALYTICS_COLLECTION_ENABLED"] = "false"
+for name in ("APP_AUTH_USERNAME", "APP_AUTH_PASSWORD", "APP_SESSION_SECRET_KEY"):
+    os.environ[name] = ""
 
 from app.database import Base, engine  # noqa: E402
 from app.analytics_migrations import upgrade_analytics_schema  # noqa: E402
 import app.models  # noqa: E402,F401 - registers ORM tables before create_all.
+from app.main import app  # noqa: E402
+from app.security import AuthPrincipal, require_admin_csrf  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def legacy_route_tests_use_an_authorized_admin():
+    """Keep non-auth route tests focused; dedicated security tests remove this override."""
+    app.dependency_overrides[require_admin_csrf] = lambda: AuthPrincipal(
+        username="test-admin", role="admin", csrf_token="test-csrf-token"
+    )
+    yield
+    app.dependency_overrides.pop(require_admin_csrf, None)
 
 
 @pytest.fixture(autouse=True)

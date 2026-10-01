@@ -14,6 +14,7 @@ from app.services.ai_pipeline import (
     AIPipelinePausedError,
     quota_counts,
 )
+from app.security import require_admin_csrf
 
 router = APIRouter(prefix="/creatives", tags=["creatives"])
 
@@ -31,7 +32,7 @@ class CreativeUpdateRequest(BaseModel):
     call_to_action: str = Field(min_length=1, max_length=255)
 
 
-@router.post("/generate")
+@router.post("/generate", dependencies=[Depends(require_admin_csrf)])
 def generate(payload: CreativeGenerateRequest, db: Session = Depends(get_db)):
     product = db.get(Product, payload.product_id)
     if not product:
@@ -59,7 +60,7 @@ def generate(payload: CreativeGenerateRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.patch("/{creative_id}")
+@router.patch("/{creative_id}", dependencies=[Depends(require_admin_csrf)])
 def update(creative_id: int, payload: CreativeUpdateRequest, db: Session = Depends(get_db)):
     creative = db.get(PinCreative, creative_id)
     if not creative:
@@ -72,7 +73,7 @@ def update(creative_id: int, payload: CreativeUpdateRequest, db: Session = Depen
     return {"id": creative.id, "status": creative.status}
 
 
-@router.post("/{creative_id}/approve")
+@router.post("/{creative_id}/approve", dependencies=[Depends(require_admin_csrf)])
 def approve(creative_id: int, db: Session = Depends(get_db)):
     creative = db.get(PinCreative, creative_id)
     if not creative:
@@ -82,7 +83,7 @@ def approve(creative_id: int, db: Session = Depends(get_db)):
     return RedirectResponse(url="/", status_code=303)
 
 
-@router.post("/{creative_id}/delete")
+@router.post("/{creative_id}/delete", dependencies=[Depends(require_admin_csrf)])
 def delete(creative_id: int, db: Session = Depends(get_db)):
     creative = db.get(PinCreative, creative_id)
     if not creative:
