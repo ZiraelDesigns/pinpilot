@@ -34,7 +34,7 @@ form { display: inline-block; margin: .25rem .5rem .25rem 0; }
 button, .button { border: 1px solid transparent; border-radius: .5rem; background: var(--accent); color: #fff; cursor: pointer; display: inline-block; padding: .65rem .9rem; text-decoration: none; font: inherit; transition: background-color .15s ease, border-color .15s ease; }
 button:hover, .button:hover { background: var(--accent-hover); }
 button:focus-visible, .button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid #f28ca2; outline-offset: 2px; }
-button:disabled { opacity: .6; cursor: wait; }
+button:disabled { opacity: .6; cursor: not-allowed; }
 button.secondary { background: #414149; border-color: #51515a; }
 button.secondary:hover { background: #50505a; }
 .notice { border: 1px solid var(--border); border-radius: .5rem; padding: .7rem; color: var(--text); background: var(--panel-raised); }

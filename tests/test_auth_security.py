@@ -4,7 +4,9 @@ from fastapi.testclient import TestClient
 from itsdangerous import URLSafeTimedSerializer
 
 from app.config import settings
+from app.database import SessionLocal
 from app.main import app
+from app.models import EtsyAccount, Product
 from app.security import SESSION_COOKIE, SESSION_SALT, require_admin_csrf
 
 
@@ -60,6 +62,51 @@ def test_unauthenticated_mutations_are_rejected_but_read_only_gets_remain_open(m
         assert client.get("/pipeline/status").status_code == 200
         assert client.get("/pinterest/boards").status_code == 200
         assert client.get("/experiments").status_code == 200
+
+
+def test_dashboard_operation_buttons_reflect_admin_session_without_misleading_busy_cursor(monkeypatch):
+    _strict_auth(monkeypatch)
+    with SessionLocal() as db:
+        db.add(Product(title="Dashboard action test product", url="https://example.test/dashboard-test"))
+        db.add(EtsyAccount(shop_name="Dashboard action test shop", is_active=True))
+        db.commit()
+
+    with TestClient(app, base_url="https://testserver") as client:
+        anonymous_dashboard = client.get("/").text
+        for marker in (
+            'id="ai-pipeline-toggle"',
+            '<form id="creative-generate-form">',
+            'action="/pinterest/connect"',
+            'action="/etsy/sync"',
+            'action="/etsy/disconnect"',
+        ):
+            assert marker in anonymous_dashboard
+        assert "yönetici girişi" in anonymous_dashboard
+        anonymous_pipeline_button = re.search(r'<button id="ai-pipeline-toggle"[^>]*>', anonymous_dashboard).group(0)
+        assert re.search(r"\sdisabled(?:\s|>)", anonymous_pipeline_button)
+        assert '<button type="submit" disabled>Kreatif oluştur</button>' in anonymous_dashboard
+        assert '<button type="submit" disabled>Pinterest\'e bağlan</button>' in anonymous_dashboard
+        assert '<button type="submit" disabled>Etsy ilanlarını eşitle</button>' in anonymous_dashboard
+        assert '<button class="secondary" type="submit" disabled>Etsy bağlantısını kaldır</button>' in anonymous_dashboard
+
+        stylesheet = client.get("/static/style.css").text
+        assert "button:disabled { opacity: .6; cursor: not-allowed; }" in stylesheet
+        assert "button:disabled { opacity: .6; cursor: wait; }" not in stylesheet
+
+        assert _login(client).status_code == 303
+        admin_dashboard = client.get("/").text
+        admin_pipeline_button = re.search(r'<button id="ai-pipeline-toggle"[^>]*>', admin_dashboard).group(0)
+        assert not re.search(r"\sdisabled(?:\s|>)", admin_pipeline_button)
+        assert re.search(r'<button type="submit"\s*>Kreatif oluştur</button>', admin_dashboard)
+        for action in ("/pinterest/connect", "/etsy/sync", "/etsy/disconnect"):
+            form = re.search(
+                rf'<form method="post" action="{re.escape(action)}">.*?</form>',
+                admin_dashboard,
+                re.DOTALL,
+            ).group(0)
+            button = re.search(r"<button\b[^>]*>", form).group(0)
+            assert not re.search(r"\sdisabled(?:\s|>)", button)
+            assert '<input type="hidden" name="_csrf" value="' in form
 
 
 def test_login_requires_login_csrf_and_sets_hardened_expiring_admin_cookie(monkeypatch):
