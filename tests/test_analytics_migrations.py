@@ -40,6 +40,10 @@ def test_analytics_migration_runs_on_clean_database_and_is_idempotent():
             assert "seo_trend_seasonal_assessments" in tables
             assert "pinterest_board_seo_profiles" in tables
             assert "pinterest_board_recommendations" in tables
+            assert {
+                "seo_ab_experiments", "seo_ab_variants",
+                "seo_ab_variant_publications", "seo_ab_comparisons",
+            } <= tables
             board_columns = {column["name"] for column in inspect(engine).get_columns("pinterest_boards")}
             assert {"source", "fetched_at", "metadata_version"} <= board_columns
             board_unique_indexes = {

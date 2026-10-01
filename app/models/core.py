@@ -1066,3 +1066,112 @@ class ExperimentEvaluationResult(Base):
 
     evaluation: Mapped[ExperimentEvaluation] = relationship(back_populates="variant_results")
     variant: Mapped[ExperimentVariant] = relationship()
+
+
+class SEOABExperiment(Base):
+    """Local, non-publishing experiment based on an immutable SEO generation."""
+
+    __tablename__ = "seo_ab_experiments"
+    __table_args__ = (
+        UniqueConstraint("source_generation_id", "idempotency_key", name="uq_seo_ab_experiment_source_idempotency"),
+        CheckConstraint("status IN ('DRAFT', 'READY', 'RUNNING', 'PAUSED', 'COMPLETED', 'CANCELLED')", name="ck_seo_ab_experiment_status"),
+        Index("ix_seo_ab_experiments_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_generation_id: Mapped[int] = mapped_column(ForeignKey("seo_generations.id", ondelete="RESTRICT"), nullable=False)
+    experiment_version: Mapped[str] = mapped_column(String(64), nullable=False, default="seo_ab_experiment_v1")
+    variation_version: Mapped[str] = mapped_column(String(64), nullable=False, default="seo_variation_v1")
+    comparison_version: Mapped[str] = mapped_column(String(64), nullable=False, default="seo_ab_comparison_v1")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="DRAFT")
+    hypothesis: Mapped[str] = mapped_column(Text, nullable=False)
+    hypothesis_source: Mapped[str] = mapped_column(String(16), nullable=False, default="human_defined")
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="local_seo_only")
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False, default="seo_variation_v1")
+    source_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    provenance_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_naive_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_naive_now, onupdate=_utc_naive_now)
+
+    source_generation: Mapped[SEOGeneration] = relationship()
+    variants: Mapped[list["SEOABVariant"]] = relationship(back_populates="experiment", order_by="SEOABVariant.variant_key")
+    comparisons: Mapped[list["SEOABComparison"]] = relationship(back_populates="experiment")
+
+
+class SEOABVariant(Base):
+    """Immutable local SEO candidate; never a publish command."""
+
+    __tablename__ = "seo_ab_variants"
+    __table_args__ = (
+        UniqueConstraint("experiment_id", "variant_key", name="uq_seo_ab_variant_experiment_key"),
+        CheckConstraint("variant_type IN ('KEYWORD_FOCUS')", name="ck_seo_ab_variant_supported_type"),
+        CheckConstraint("status IN ('READY', 'QUALITY_FAIL', 'ARCHIVED')", name="ck_seo_ab_variant_status"),
+        CheckConstraint("quality_status IN ('PASS', 'WARN', 'FAIL')", name="ck_seo_ab_variant_quality_status"),
+        Index("ix_seo_ab_variants_experiment_status", "experiment_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    experiment_id: Mapped[int] = mapped_column(ForeignKey("seo_ab_experiments.id", ondelete="RESTRICT"), nullable=False)
+    variant_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    variant_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    variant_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="READY")
+    output_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    change_set: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    keyword_intelligence_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    quality_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    quality_status: Mapped[str] = mapped_column(String(8), nullable=False)
+    quality_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    provenance_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False, default="seo_variation_v1")
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="deterministic")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_naive_now)
+
+    experiment: Mapped[SEOABExperiment] = relationship(back_populates="variants")
+    publications: Mapped[list["SEOABVariantPublication"]] = relationship(back_populates="variant")
+
+
+class SEOABVariantPublication(Base):
+    """Explicit, verified association made only after an external publication exists."""
+
+    __tablename__ = "seo_ab_variant_publications"
+    __table_args__ = (
+        UniqueConstraint("variant_id", "published_pin_id", name="uq_seo_ab_variant_publication_variant_pin"),
+        UniqueConstraint("published_pin_id", name="uq_seo_ab_variant_publication_pin"),
+        Index("ix_seo_ab_variant_publications_variant", "variant_id"),
+        Index("ix_seo_ab_variant_publications_pin", "published_pin_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    variant_id: Mapped[int] = mapped_column(ForeignKey("seo_ab_variants.id", ondelete="RESTRICT"), nullable=False)
+    published_pin_id: Mapped[int] = mapped_column(ForeignKey("published_pinterest_pins.id", ondelete="RESTRICT"), nullable=False)
+    linked_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_naive_now)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="explicit_verified_link")
+
+    variant: Mapped[SEOABVariant] = relationship(back_populates="publications")
+    published_pin: Mapped[PublishedPinterestPin] = relationship()
+
+
+class SEOABComparison(Base):
+    """Frozen observed comparison over explicit daily analytics snapshots."""
+
+    __tablename__ = "seo_ab_comparisons"
+    __table_args__ = (
+        UniqueConstraint("experiment_id", "comparison_version", "source_fingerprint", name="uq_seo_ab_comparison_fingerprint"),
+        CheckConstraint("period_start <= period_end", name="ck_seo_ab_comparison_period"),
+        Index("ix_seo_ab_comparisons_experiment_created", "experiment_id", "calculated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    experiment_id: Mapped[int] = mapped_column(ForeignKey("seo_ab_experiments.id", ondelete="RESTRICT"), nullable=False)
+    metric_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    calculated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_naive_now)
+    comparison_version: Mapped[str] = mapped_column(String(64), nullable=False, default="seo_ab_comparison_v1")
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False, default=list)
+    result_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    experiment: Mapped[SEOABExperiment] = relationship(back_populates="comparisons")
