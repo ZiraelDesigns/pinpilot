@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     AnalyticsSnapshot,
     PinterestAccount,
+    PinterestPublishIntent,
     PublishedPinterestPin,
     SEOABComparison,
     SEOABExperiment,
@@ -138,6 +139,112 @@ def _variant_keyword_snapshot(source_intelligence: SEOKeywordIntelligence, candi
     return snapshot
 
 
+def _keyword_candidates(source: dict[str, Any], intelligence: SEOKeywordIntelligence) -> dict[str, dict[str, Any]]:
+    seo = source.get("seo_metadata") if isinstance(source.get("seo_metadata"), dict) else {}
+    raw_primary = seo.get("primary_keyword") if isinstance(seo.get("primary_keyword"), str) else ""
+    original_primary = normalize_keyword(raw_primary)
+    candidates: dict[str, dict[str, Any]] = {}
+    for item in intelligence.keyword_items or []:
+        if not isinstance(item, dict) or not item.get("valid"):
+            continue
+        kind, normalized = item.get("keyword_type"), item.get("normalized")
+        if kind not in {"SECONDARY", "LONG_TAIL"} or not isinstance(normalized, str):
+            continue
+        normalized = normalize_keyword(normalized)
+        if normalized and normalized != original_primary:
+            candidates.setdefault(normalized, {"raw": item.get("raw") or normalized, "type": kind})
+    return candidates
+
+
+def _create_keyword_focus_variant(
+    db: Session,
+    experiment: SEOABExperiment,
+    *,
+    source: dict[str, Any],
+    intelligence: SEOKeywordIntelligence,
+    candidate: str,
+    entry: dict[str, Any],
+) -> SEOABVariant:
+    existing = db.scalar(select(SEOABVariant).where(
+        SEOABVariant.experiment_id == experiment.id,
+        SEOABVariant.variant_key == _canonical_hash({
+            "experiment": experiment.idempotency_key,
+            "primary": candidate,
+        })[:24],
+    ))
+    if existing is not None:
+        return existing
+
+    seo = source.get("seo_metadata") if isinstance(source.get("seo_metadata"), dict) else {}
+    raw_primary = seo.get("primary_keyword") if isinstance(seo.get("primary_keyword"), str) else ""
+    original_primary = normalize_keyword(raw_primary)
+    secondary = [value for value in seo.get("secondary_keywords", []) if isinstance(value, str)] if isinstance(seo.get("secondary_keywords"), list) else []
+    long_tail = [value for value in seo.get("long_tail_keywords", []) if isinstance(value, str)] if isinstance(seo.get("long_tail_keywords"), list) else []
+    existing_secondary = {normalize_keyword(value) for value in secondary}
+
+    variant_snapshot = json.loads(json.dumps(source, ensure_ascii=False))
+    variant_seo = variant_snapshot.get("seo_metadata")
+    if not isinstance(variant_seo, dict):
+        raise ValueError("The source SEO snapshot has no structured SEO metadata")
+    candidate_raw = str(entry["raw"])
+    variant_seo["primary_keyword"] = candidate_raw
+    variant_seo["secondary_keywords"] = (
+        [raw_primary, *secondary] if raw_primary and original_primary not in existing_secondary else list(secondary)
+    )
+    if entry["type"] == "LONG_TAIL":
+        variant_seo["long_tail_keywords"] = [value for value in long_tail if normalize_keyword(value) != candidate]
+    variant_intelligence = _variant_keyword_snapshot(intelligence, candidate, original_primary or "")
+    quality = calculate_seo_quality(variant_snapshot, variant_intelligence)
+    variant_key = _canonical_hash({"experiment": experiment.idempotency_key, "primary": candidate})[:24]
+    provenance = experiment.provenance_snapshot or {}
+    variant = SEOABVariant(
+        experiment=experiment,
+        variant_key=variant_key,
+        variant_name=f"Keyword focus: {candidate_raw[:96]}",
+        variant_type="KEYWORD_FOCUS",
+        status="QUALITY_FAIL" if quality["validation"]["status"] == "FAIL" else "READY",
+        output_snapshot=variant_snapshot,
+        change_set={
+            "changed_fields": [
+                "seo_metadata.primary_keyword", "seo_metadata.secondary_keywords",
+                *( ["seo_metadata.long_tail_keywords"] if entry["type"] == "LONG_TAIL" else [] ),
+            ],
+            "from": {
+                "primary_keyword": raw_primary,
+                "secondary_keywords": secondary,
+                **({"long_tail_keywords": long_tail} if entry["type"] == "LONG_TAIL" else {}),
+            },
+            "to": {
+                "primary_keyword": candidate_raw,
+                "secondary_keywords": variant_seo["secondary_keywords"],
+                **({"long_tail_keywords": variant_seo["long_tail_keywords"]} if entry["type"] == "LONG_TAIL" else {}),
+            },
+            "candidate_source": entry["type"],
+            "new_keywords_created": False,
+        },
+        keyword_intelligence_snapshot=variant_intelligence,
+        quality_snapshot=quality,
+        quality_status=quality["validation"]["status"],
+        quality_score=quality["score"]["overall"],
+        provenance_snapshot={
+            **provenance,
+            "source_snapshot_hash": _canonical_hash(source),
+            "source_keyword_candidate": candidate,
+            "source_keyword_type": entry["type"],
+            "learning_context_ids": [row.get("learning_id") for row in provenance.get("performance_learning_context", [])],
+            "learning_signal_types": [row.get("signal_type") for row in provenance.get("performance_learning_context", [])],
+            "created_at": _now().isoformat(),
+            "algorithm_version": VARIATION_VERSION,
+            "provider": "deterministic",
+            "external_calls": False,
+        },
+        created_at=_now(),
+    )
+    db.add(variant)
+    db.flush()
+    return variant
+
+
 def create_seo_ab_experiment(
     db: Session,
     source_generation_id: int,
@@ -145,6 +252,7 @@ def create_seo_ab_experiment(
     hypothesis: str,
     hypothesis_source: str = "human_defined",
     performance_learning_ids: list[int] | None = None,
+    generate_variants: bool = True,
 ) -> SEOABExperiment:
     """Create/retrieve a stable experiment set and keyword-focus variants.
 
@@ -190,11 +298,23 @@ def create_seo_ab_experiment(
         "hypothesis_source": hypothesis_source,
         "learning_ids": learning_ids,
     }
+    # Preserve the original idempotency identity for the historical default
+    # (experiment plus its deterministic candidate set). Only the explicit
+    # experiment-only mode needs a distinct identity.
+    if not generate_variants:
+        identity["generate_variants"] = False
     idempotency_key = _canonical_hash(identity)
     existing = db.scalar(select(SEOABExperiment).where(
         SEOABExperiment.idempotency_key == idempotency_key
     ))
     if existing is not None:
+        if generate_variants:
+            for normalized, entry in sorted(_keyword_candidates(source, intelligence).items()):
+                _create_keyword_focus_variant(
+                    db, existing, source=existing.source_snapshot or source,
+                    intelligence=intelligence, candidate=normalized, entry=entry,
+                )
+            db.flush()
         return existing
 
     experiment = SEOABExperiment(
@@ -214,88 +334,54 @@ def create_seo_ab_experiment(
     db.add(experiment)
     db.flush()
 
-    seo = source.get("seo_metadata") if isinstance(source.get("seo_metadata"), dict) else {}
-    raw_primary = seo.get("primary_keyword") if isinstance(seo.get("primary_keyword"), str) else ""
-    original_primary = normalize_keyword(raw_primary)
-    candidates: dict[str, dict[str, Any]] = {}
-    for item in intelligence.keyword_items or []:
-        if not isinstance(item, dict) or not item.get("valid"):
-            continue
-        kind = item.get("keyword_type")
-        normalized = item.get("normalized")
-        if kind not in {"SECONDARY", "LONG_TAIL"} or not isinstance(normalized, str):
-            continue
-        normalized = normalize_keyword(normalized)
-        if not normalized or normalized == original_primary:
-            continue
-        candidates.setdefault(normalized, {"raw": item.get("raw") or normalized, "type": kind})
-
-    secondary = [v for v in seo.get("secondary_keywords", []) if isinstance(v, str)] if isinstance(seo.get("secondary_keywords"), list) else []
-    long_tail = [v for v in seo.get("long_tail_keywords", []) if isinstance(v, str)] if isinstance(seo.get("long_tail_keywords"), list) else []
-    existing_secondary = {normalize_keyword(v) for v in secondary}
-    for normalized, entry in sorted(candidates.items()):
-        variant_snapshot = json.loads(json.dumps(source, ensure_ascii=False))
-        variant_seo = variant_snapshot.get("seo_metadata")
-        if not isinstance(variant_seo, dict):
-            continue
-        candidate_raw = str(entry["raw"])
-        variant_seo["primary_keyword"] = candidate_raw
-        if raw_primary and original_primary not in existing_secondary:
-            variant_seo["secondary_keywords"] = [raw_primary, *secondary]
-        else:
-            variant_seo["secondary_keywords"] = list(secondary)
-        if entry["type"] == "LONG_TAIL":
-            variant_seo["long_tail_keywords"] = [value for value in long_tail if normalize_keyword(value) != normalized]
-        variant_intelligence = _variant_keyword_snapshot(intelligence, normalized, original_primary or "")
-        quality = calculate_seo_quality(variant_snapshot, variant_intelligence)
-        variant_key = _canonical_hash({"experiment": idempotency_key, "primary": normalized})[:24]
-        variant = SEOABVariant(
-            experiment=experiment,
-            variant_key=variant_key,
-            variant_name=f"Keyword focus: {candidate_raw[:96]}",
-            variant_type="KEYWORD_FOCUS",
-            status="QUALITY_FAIL" if quality["validation"]["status"] == "FAIL" else "READY",
-            output_snapshot=variant_snapshot,
-            change_set={
-                "changed_fields": [
-                    "seo_metadata.primary_keyword", "seo_metadata.secondary_keywords",
-                    *(["seo_metadata.long_tail_keywords"] if entry["type"] == "LONG_TAIL" else []),
-                ],
-                "from": {
-                    "primary_keyword": raw_primary,
-                    "secondary_keywords": secondary,
-                    **({"long_tail_keywords": long_tail} if entry["type"] == "LONG_TAIL" else {}),
-                },
-                "to": {
-                    "primary_keyword": candidate_raw,
-                    "secondary_keywords": variant_seo["secondary_keywords"],
-                    **({"long_tail_keywords": variant_seo["long_tail_keywords"]} if entry["type"] == "LONG_TAIL" else {}),
-                },
-                "candidate_source": entry["type"],
-                "new_keywords_created": False,
-            },
-            keyword_intelligence_snapshot=variant_intelligence,
-            quality_snapshot=quality,
-            quality_status=quality["validation"]["status"],
-            quality_score=quality["score"]["overall"],
-            provenance_snapshot={
-                **provenance,
-                "source_snapshot_hash": _canonical_hash(source),
-                "source_keyword_candidate": normalized,
-                "source_keyword_type": entry["type"],
-                "learning_context_ids": learning_ids,
-                "learning_signal_types": [item["signal_type"] for item in learning_context],
-                "created_at": _now().isoformat(),
-                "algorithm_version": VARIATION_VERSION,
-                "provider": "deterministic",
-                "external_calls": False,
-            },
-            created_at=_now(),
-        )
-        db.add(variant)
+    if generate_variants:
+        candidates = _keyword_candidates(source, intelligence)
+        for normalized, entry in sorted(candidates.items()):
+            _create_keyword_focus_variant(
+                db, experiment, source=source, intelligence=intelligence,
+                candidate=normalized, entry=entry,
+            )
     db.flush()
     return experiment
 
+
+def create_seo_ab_variant(
+    db: Session,
+    experiment_id: int,
+    *,
+    variant_type: str = "KEYWORD_FOCUS",
+    candidate_keyword: str | None = None,
+) -> SEOABVariant:
+    """Create/retrieve one deterministic variant from persisted candidates only."""
+    if variant_type not in SUPPORTED_VARIANT_TYPES:
+        raise ValueError("Unsupported SEO A/B variant type")
+    experiment = db.get(SEOABExperiment, experiment_id)
+    if experiment is None:
+        raise ValueError("SEO A/B experiment was not found")
+    if experiment.status != "DRAFT":
+        raise ValueError("Variants can only be added while the experiment is DRAFT")
+    generation = db.get(SEOGeneration, experiment.source_generation_id)
+    if generation is None:
+        raise ValueError("Source SEO generation was not found")
+    intelligence = db.scalar(select(SEOKeywordIntelligence).where(
+        SEOKeywordIntelligence.seo_generation_id == generation.id
+    ))
+    if intelligence is None or intelligence.status != "completed":
+        raise ValueError("Completed Keyword Intelligence is required")
+    source = experiment.source_snapshot or _snapshot(generation)
+    candidates = _keyword_candidates(source, intelligence)
+    if candidate_keyword is None:
+        if not candidates:
+            raise ValueError("No existing keyword candidate is available for a variant")
+        candidate = sorted(candidates)[0]
+    else:
+        candidate = normalize_keyword(candidate_keyword)
+        if not candidate or candidate not in candidates:
+            raise ValueError("Variant keyword must match an existing valid secondary or long-tail candidate")
+    return _create_keyword_focus_variant(
+        db, experiment, source=source, intelligence=intelligence,
+        candidate=candidate, entry=candidates[candidate],
+    )
 
 _TRANSITIONS = {
     "DRAFT": {"READY", "CANCELLED"},
@@ -315,6 +401,17 @@ def transition_seo_ab_experiment(db: Session, experiment_id: int, new_status: st
         raise ValueError(f"Invalid SEO A/B experiment transition: {experiment.status} -> {new_status}")
     if new_status == "READY" and not any(v.status == "READY" for v in experiment.variants):
         raise ValueError("At least one non-failing variant is required before READY")
+    if new_status == "COMPLETED":
+        comparisons = list(db.scalars(select(SEOABComparison).where(
+            SEOABComparison.experiment_id == experiment.id
+        ).order_by(SEOABComparison.calculated_at.desc(), SEOABComparison.id.desc())))
+        has_variant_observation = any(
+            row.result_snapshot.get("status") == "observed"
+            and any(int(item.get("sample_count") or 0) > 0 for item in row.result_snapshot.get("variants", []))
+            for row in comparisons
+        )
+        if not has_variant_observation:
+            raise ValueError("An experiment cannot be completed before variant analytics are observed")
     experiment.status = new_status
     experiment.updated_at = _now()
     db.flush()
@@ -322,11 +419,7 @@ def transition_seo_ab_experiment(db: Session, experiment_id: int, new_status: st
 
 
 def link_verified_variant_publication(db: Session, variant_id: int, published_pin_id: int) -> SEOABVariantPublication:
-    """Link only when the publication explicitly carries this variant ID.
-
-    The publisher is intentionally untouched. A future controlled publisher may
-    add the marker when it submits this exact immutable variant snapshot.
-    """
+    """Idempotently link a provider-confirmed Pin carrying exact variant provenance."""
     variant = db.get(SEOABVariant, variant_id)
     publication = db.get(PublishedPinterestPin, published_pin_id)
     if variant is None or publication is None:
@@ -340,6 +433,13 @@ def link_verified_variant_publication(db: Session, variant_id: int, published_pi
     generation_id = publication.seo_generation_id or (publication.metadata_snapshot or {}).get("seo_generation_id")
     if marker != variant.id or generation_id != experiment.source_generation_id:
         raise ValueError("Published Pin lacks an explicit matching variant provenance marker")
+    confirmed_intent = db.scalar(select(PinterestPublishIntent).where(
+        PinterestPublishIntent.published_pin_id == publication.id,
+        PinterestPublishIntent.seo_ab_variant_id == variant.id,
+        PinterestPublishIntent.status == "published",
+    ))
+    if confirmed_intent is None:
+        raise ValueError("Published Pin has no matching provider-confirmed variant publish intent")
     existing = db.scalar(select(SEOABVariantPublication).where(
         SEOABVariantPublication.variant_id == variant.id,
         SEOABVariantPublication.published_pin_id == publication.id,
@@ -403,18 +503,20 @@ def compare_seo_ab_experiment(
     if experiment is None:
         raise ValueError("SEO A/B experiment was not found")
     variant_publications: dict[int, list[PublishedPinterestPin]] = {}
-    all_variant_pub_ids: set[int] = set()
     for variant in experiment.variants:
         links = list(db.scalars(select(SEOABVariantPublication).where(
             SEOABVariantPublication.variant_id == variant.id
         ).order_by(SEOABVariantPublication.id)))
         variant_publications[variant.id] = [link.published_pin for link in links]
-        all_variant_pub_ids.update(link.published_pin_id for link in links)
+    all_source_variant_pub_ids = select(SEOABVariantPublication.published_pin_id).join(
+        SEOABVariant, SEOABVariantPublication.variant_id == SEOABVariant.id
+    ).join(
+        SEOABExperiment, SEOABVariant.experiment_id == SEOABExperiment.id
+    ).where(SEOABExperiment.source_generation_id == experiment.source_generation_id)
     baseline_query = select(PublishedPinterestPin).where(
         PublishedPinterestPin.seo_generation_id == experiment.source_generation_id
     )
-    if all_variant_pub_ids:
-        baseline_query = baseline_query.where(PublishedPinterestPin.id.not_in(all_variant_pub_ids))
+    baseline_query = baseline_query.where(PublishedPinterestPin.id.not_in(all_source_variant_pub_ids))
     baseline_pubs = list(db.scalars(baseline_query.order_by(PublishedPinterestPin.id)))
     all_publications = [*baseline_pubs, *(publication for rows in variant_publications.values() for publication in rows)]
     if account_id is not None and account_identifier is None:

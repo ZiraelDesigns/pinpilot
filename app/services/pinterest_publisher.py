@@ -7,6 +7,7 @@ deliberately disabled until Pinterest publishing has been approved and verified.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -22,6 +23,7 @@ from app.models import (
     PinterestPublishIntent,
     PinterestPublishIntentStatus,
     PublishedPinterestPin,
+    SEOABVariant,
 )
 from app.models.core import PinStatus
 
@@ -204,7 +206,19 @@ class PinterestPublisher:
         self.provider = provider or DisabledPinterestPinPublishingProvider()
         self.now = now or (lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
-    def publish_pin(self, pin_id: int, account_id: int, board_id: int | None = None) -> PublishedPinterestPin:
+    def publish_pin(
+        self,
+        pin_id: int,
+        account_id: int,
+        board_id: int | None = None,
+        *,
+        seo_ab_variant_id: int | None = None,
+    ) -> PublishedPinterestPin:
+        """Publish a local Pin, optionally using one explicitly selected SEO variant.
+
+        Production remains fail-closed through the existing provider flag. Variant
+        attribution is recorded only after a provider-confirmed Published Pin.
+        """
         if not self.provider.publishing_enabled:
             raise PinterestPublishingUnavailable(
                 "Pinterest Pin publishing is unavailable until the API integration is approved."
@@ -222,6 +236,27 @@ class PinterestPublisher:
         if isinstance(self.provider, PinterestApiPublishingProvider) and board is None:
             raise PinterestPublishRejected("Pinterest publishing requires a board selected from this account.")
 
+        variant = None
+        if seo_ab_variant_id is not None:
+            variant = self.db.get(SEOABVariant, seo_ab_variant_id)
+            if variant is None:
+                raise PinterestPublishingError("The requested SEO A/B variant was not found.")
+            experiment = variant.experiment
+            if variant.variant_type != "KEYWORD_FOCUS" or variant.status != "READY" or variant.quality_status == "FAIL":
+                raise PinterestPublishRejected("Only a quality-approved supported SEO variant can be published.")
+            if experiment.status != "RUNNING":
+                raise PinterestPublishRejected("SEO A/B variant publishing requires an explicitly RUNNING experiment.")
+            source_generation = experiment.source_generation
+            creative = pin.creative
+            if source_generation.creative_id is None and source_generation.product_id is None:
+                raise PinterestPublishRejected("The variant source generation has no verified local product or creative link.")
+            if source_generation.creative_id is not None and (
+                creative is None or creative.id != source_generation.creative_id
+            ):
+                raise PinterestPublishRejected("The variant source generation does not belong to this local Pin creative.")
+            if source_generation.product_id is not None and pin.product_id != source_generation.product_id:
+                raise PinterestPublishRejected("The variant source generation does not belong to this local Pin product.")
+
         intent = self.db.scalar(select(PinterestPublishIntent).where(
             PinterestPublishIntent.pin_id == pin.id,
             PinterestPublishIntent.account_identifier_snapshot == account.account_identifier,
@@ -234,13 +269,28 @@ class PinterestPublisher:
                 PublishedPinterestPin.external_pin_id.is_not(None),
             ))
             if legacy_publication is not None:
+                if variant is not None:
+                    raise PinterestPublishingError("An existing unattributed publication cannot be assigned to an SEO variant.")
                 return legacy_publication
             if not self._pin_is_publishable(pin):
                 raise PinterestPublishingError("Only a locally scheduled Pin can be published.")
         if intent is not None:
+            if intent.seo_ab_variant_id != seo_ab_variant_id:
+                raise PinterestPublishingError("A Pin publish intent cannot be reused for a different SEO variant.")
             if intent.status == PinterestPublishIntentStatus.PUBLISHED.value:
                 publication = intent.published_pin or self.db.get(PublishedPinterestPin, intent.published_pin_id)
                 if publication is not None:
+                    if variant is not None:
+                        try:
+                            from app.services.seo_ab_variations import link_verified_variant_publication
+
+                            link_verified_variant_publication(self.db, variant.id, publication.id)
+                            self.db.commit()
+                        except ValueError:
+                            intent.status = PinterestPublishIntentStatus.UNKNOWN.value
+                            intent.error_summary = "Variant publication attribution could not be verified; reconcile before retrying."
+                            self.db.commit()
+                            raise PinterestPublishOutcomeUnknown(intent.error_summary) from None
                     return publication
                 raise PinterestPublishOutcomeUnknown(
                     "The completed publication record is unavailable; reconcile it before retrying."
@@ -283,6 +333,7 @@ class PinterestPublisher:
                 pin=pin,
                 account=account,
                 board=board,
+                seo_ab_variant=variant,
                 account_identifier_snapshot=account.account_identifier,
                 status=PinterestPublishIntentStatus.PUBLISHING.value,
                 last_attempt_at=self.now(),
@@ -301,8 +352,8 @@ class PinterestPublisher:
 
         request = PinterestPinPublishRequest(
             idempotency_key=intent.idempotency_key,
-            title=pin.title,
-            description=pin.description,
+            title=(variant.output_snapshot.get("title") if variant else None) or pin.title,
+            description=(variant.output_snapshot.get("description") if variant else pin.description),
             image_reference=pin.image_path,
             destination_url=pin.destination_url,
             board_external_id=board.board_id if board else None,
@@ -342,6 +393,22 @@ class PinterestPublisher:
         ))
         if duplicate is not None:
             if duplicate.pin_id == pin.id:
+                if variant is not None:
+                    try:
+                        # Recover only an exact previously-confirmed variant publication.
+                        if (duplicate.metadata_snapshot or {}).get("seo_ab_variant_id") != variant.id:
+                            raise ValueError("variant provenance does not match")
+                        intent.published_pin = duplicate
+                        intent.status = PinterestPublishIntentStatus.PUBLISHED.value
+                        self.db.flush()
+                        from app.services.seo_ab_variations import link_verified_variant_publication
+
+                        link_verified_variant_publication(self.db, variant.id, duplicate.id)
+                    except ValueError:
+                        intent.status = PinterestPublishIntentStatus.UNKNOWN.value
+                        intent.error_summary = "An existing Pinterest Pin did not confirm this variant attribution."
+                        self.db.commit()
+                        raise PinterestPublishOutcomeUnknown(intent.error_summary) from None
                 intent.published_pin = duplicate
                 intent.status = PinterestPublishIntentStatus.PUBLISHED.value
                 pin.status = PinStatus.PUBLISHED.value
@@ -357,6 +424,33 @@ class PinterestPublisher:
         if published_at.tzinfo is not None:
             published_at = published_at.astimezone(timezone.utc).replace(tzinfo=None)
         metadata_snapshot = PublishedPinterestPin.capture_metadata(pin)
+        if variant is not None:
+            variant_snapshot = variant.output_snapshot or {}
+            variant_seo = variant_snapshot.get("seo_metadata") if isinstance(variant_snapshot.get("seo_metadata"), dict) else {}
+            metadata_snapshot.update({
+                "creative_title": variant_snapshot.get("title") or metadata_snapshot.get("creative_title"),
+                "creative_description": variant_snapshot.get("description") or metadata_snapshot.get("creative_description"),
+                "seo_metadata": deepcopy(variant_seo),
+                "primary_keyword": variant_seo.get("primary_keyword"),
+                "creative_angle": variant_seo.get("creative_angle"),
+                "seo_generation_id": variant.experiment.source_generation_id,
+                "seo_provenance_status": "known",
+                "seo_ab_variant_id": variant.id,
+                "seo_ab_variant_key": variant.variant_key,
+                "seo_ab_experiment_id": variant.experiment_id,
+                "seo_ab_change_set": deepcopy(variant.change_set or {}),
+                "seo_ab_provenance": {
+                    "source_generation_id": variant.experiment.source_generation_id,
+                    "source_keyword_intelligence_id": variant.provenance_snapshot.get("source_keyword_intelligence_id"),
+                    "source_quality_assessment_id": variant.provenance_snapshot.get("source_quality_assessment_id"),
+                    "board_recommendation_ids": deepcopy(variant.provenance_snapshot.get("board_recommendation_ids", [])),
+                    "seasonal_assessment_ids": deepcopy(variant.provenance_snapshot.get("seasonal_assessment_ids", [])),
+                    "performance_learning": deepcopy(variant.provenance_snapshot.get("performance_learning", [])),
+                    "variation_algorithm_version": variant.algorithm_version,
+                    "provider": variant.provider,
+                    "external_calls": False,
+                },
+            })
         publication = PublishedPinterestPin(
             pin=pin,
             account=account,
@@ -375,6 +469,10 @@ class PinterestPublisher:
         pin.published_at = published_at
         try:
             self.db.flush()
+            if variant is not None:
+                from app.services.seo_ab_variations import link_verified_variant_publication
+
+                link_verified_variant_publication(self.db, variant.id, publication.id)
             self.db.commit()
         except IntegrityError:
             # The external side effect may already have happened. Preserve the

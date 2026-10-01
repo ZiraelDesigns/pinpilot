@@ -13,7 +13,7 @@ from datetime import date, datetime, time, timezone
 from typing import Any
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
     AnalyticsSnapshot,
@@ -27,10 +27,12 @@ from app.models import (
     SEOQualityAssessment,
     SEOPerformanceLearning,
     SEOTrendSeasonalAssessment,
+    SEOABVariant,
+    SEOABVariantPublication,
 )
 
 
-PERFORMANCE_LEARNING_VERSION = "performance_learning_v1"
+PERFORMANCE_LEARNING_VERSION = "performance_learning_v2"
 MIN_BASELINE_SAMPLES = 3
 LOW_CONFIDENCE_SAMPLES = 3
 ADEQUATE_CONFIDENCE_SAMPLES = 10
@@ -239,9 +241,14 @@ def _recommendation_context(
 
 
 def _segments_for(sample: dict[str, Any]) -> dict[str, set[str]]:
-    output = {key: set() for key in ("keyword", "semantic_group", "intent", "audience", "use_case", "creative_angle", "quality_profile", "board", "season", "holiday")}
+    output = {key: set() for key in ("keyword", "semantic_group", "intent", "audience", "use_case", "creative_angle", "quality_profile", "board", "season", "holiday", "experiment", "variant")}
+    variant = sample.get("variant")
     intel = sample.get("intelligence")
-    for item in (intel.keyword_items if intel else []) or []:
+    keyword_items = (
+        (variant.keyword_intelligence_snapshot or {}).get("keyword_items", [])
+        if variant else ((intel.keyword_items if intel else []) or [])
+    )
+    for item in keyword_items:
         if not isinstance(item, dict) or not item.get("valid"):
             continue
         kind = item.get("keyword_type")
@@ -257,7 +264,11 @@ def _segments_for(sample: dict[str, Any]) -> dict[str, set[str]]:
         if normalized and kind == "USE_CASE":
             output["use_case"].add(normalized)
     generation = sample.get("generation")
-    snapshot = generation.output_snapshot if generation and isinstance(generation.output_snapshot, dict) else {}
+    snapshot = (
+        variant.output_snapshot if variant and isinstance(variant.output_snapshot, dict)
+        else generation.output_snapshot if generation and isinstance(generation.output_snapshot, dict)
+        else {}
+    )
     seo = snapshot.get("seo_metadata") if isinstance(snapshot.get("seo_metadata"), dict) else {}
     for intent in seo.get("search_intents", []) if isinstance(seo.get("search_intents"), list) else []:
         if isinstance(intent, str) and intent:
@@ -266,9 +277,16 @@ def _segments_for(sample: dict[str, Any]) -> dict[str, set[str]]:
     if isinstance(angle, str) and angle.strip():
         output["creative_angle"].add(angle.strip().casefold())
     quality = sample.get("quality")
-    if quality:
+    if variant and isinstance(variant.quality_snapshot, dict):
+        score = (variant.quality_snapshot.get("score") or {}).get("overall")
+        if isinstance(score, int):
+            output["quality_profile"].add("low" if score < 60 else "mid" if score < 80 else "high")
+    elif quality:
         score = quality.overall_score
         output["quality_profile"].add("low" if score < 60 else "mid" if score < 80 else "high")
+    if variant is not None:
+        output["variant"].add(variant.variant_key)
+        output["experiment"].add(str(variant.experiment_id))
     publication = sample["publication"]
     if publication.board_id is not None:
         output["board"].add(str(publication.board_id))
@@ -340,6 +358,15 @@ class PerformanceLearningService:
         pubs = {row.id: row for row in db.scalars(
             select(PublishedPinterestPin).where(PublishedPinterestPin.id.in_(pub_ids or [-1]))
         ).all()}
+        # Only the explicit verified attribution table can introduce variant
+        # dimensions. A free-form metadata marker alone is never treated as fact.
+        variant_links = list(db.scalars(
+            select(SEOABVariantPublication)
+            .options(joinedload(SEOABVariantPublication.variant).joinedload(SEOABVariant.experiment))
+            .where(SEOABVariantPublication.published_pin_id.in_(pub_ids or [-1]))
+            .order_by(SEOABVariantPublication.id)
+        ).all())
+        variant_by_publication = {row.published_pin_id: row.variant for row in variant_links}
         generation_ids = sorted({
             candidate
             for publication in pubs.values()
@@ -392,6 +419,8 @@ class PerformanceLearningService:
                 "board_id": publication.board_id,
                 "board_recommendation_id": source_board_recommendation.id if source_board_recommendation else None,
                 "seasonal_assessment_id": source_season.id if source_season else None,
+                "seo_ab_variant_id": variant_by_publication[publication.id].id if publication.id in variant_by_publication else None,
+                "seo_ab_experiment_id": variant_by_publication[publication.id].experiment_id if publication.id in variant_by_publication else None,
             })
         fingerprint = _canonical_fingerprint(
             scope_key=scope_key, start=window_start, end=window_end,
@@ -445,6 +474,7 @@ class PerformanceLearningService:
                 "quality": quality.get(generation.id) if generation else None,
                 "seasonal": seasonal_for_publication,
                 "board_recommendation": board_rec_for_publication,
+                "variant": variant_by_publication.get(pub_id),
             }
             sample["segments"] = _segments_for(sample)
             samples.append(sample)
@@ -463,7 +493,7 @@ class PerformanceLearningService:
             select(PinterestBoard).where(PinterestBoard.id.in_(board_ids or [-1]))
         ).all()}
         dimensions: dict[str, list[dict[str, Any]]] = {}
-        for dimension in ("keyword", "semantic_group", "intent", "audience", "use_case", "creative_angle", "quality_profile", "board", "season", "holiday"):
+        for dimension in ("keyword", "semantic_group", "intent", "audience", "use_case", "creative_angle", "quality_profile", "board", "season", "holiday", "experiment", "variant"):
             grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for sample in samples:
                 for value in sorted(sample["segments"][dimension]):
@@ -505,6 +535,9 @@ class PerformanceLearningService:
             "observations": [{
                 "published_pin_id": sample["published_pin_id"],
                 "seo_generation_id": sample["seo_generation_id"],
+                "seo_ab_experiment_id": sample["variant"].experiment_id if sample["variant"] else None,
+                "seo_ab_variant_id": sample["variant"].id if sample["variant"] else None,
+                "seo_ab_variant_key": sample["variant"].variant_key if sample["variant"] else None,
                 "source_snapshot_ids": sample["source_snapshot_ids"],
                 "metric_dates": sample["metric_dates"],
                 "board_id": sample["publication"].board_id,
@@ -549,3 +582,8 @@ class PerformanceLearningService:
 def recalculate_performance_learning(db: Session, **kwargs: Any) -> SEOPerformanceLearning:
     """Convenience entry point for a future controlled batch job; does not schedule it."""
     return PerformanceLearningService().recalculate(db, **kwargs)
+
+
+def run_performance_learning(db: Session, **kwargs: Any) -> SEOPerformanceLearning:
+    """Explicit, idempotent batch entry point; no scheduler or provider is invoked."""
+    return recalculate_performance_learning(db, **kwargs)

@@ -395,6 +395,13 @@ def upgrade_analytics_schema(engine: Engine) -> None:
         "published_pinterest_pins": {
             "seo_generation_id": "INTEGER REFERENCES seo_generations(id) ON DELETE SET NULL",
         },
+        "pinterest_publish_intents": {
+            # Nullable additive attribution. Existing publisher intents are left
+            # unattributed rather than guessed from local Pin contents.
+            "seo_ab_variant_id": (
+                "INTEGER REFERENCES seo_ab_variants(id) ON DELETE RESTRICT"
+            ),
+        },
     }
     with engine.begin() as connection:
         for table_name, additions in {**experiment_columns, **provenance_columns}.items():
@@ -410,6 +417,11 @@ def upgrade_analytics_schema(engine: Engine) -> None:
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_published_pinterest_pins_seo_generation_id "
                 "ON published_pinterest_pins (seo_generation_id)"
+            ))
+        if "pinterest_publish_intents" in table_names:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_pinterest_publish_intents_seo_ab_variant_id "
+                "ON pinterest_publish_intents (seo_ab_variant_id)"
             ))
     if "analytics_snapshots" not in table_names:
         return

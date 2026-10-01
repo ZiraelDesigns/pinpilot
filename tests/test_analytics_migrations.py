@@ -60,6 +60,10 @@ def test_analytics_migration_runs_on_clean_database_and_is_idempotent():
                 column["name"] for column in inspect(engine).get_columns("published_pinterest_pins")
             }
             assert "seo_generation_id" in published_columns
+            intent_columns = {
+                column["name"] for column in inspect(engine).get_columns("pinterest_publish_intents")
+            }
+            assert "seo_ab_variant_id" in intent_columns
             columns = {column["name"] for column in inspect(engine).get_columns("analytics_snapshots")}
             assert {
                 "pin_id", "impressions", "saves", "outbound_clicks", "recorded_at",
@@ -67,6 +71,48 @@ def test_analytics_migration_runs_on_clean_database_and_is_idempotent():
                 "period_end", "fetched_at", "pin_clicks", "engagements", "engagement_rate",
                 "pin_click_rate", "outbound_click_rate", "metric_schema_version",
             } <= columns
+        finally:
+            engine.dispose()
+
+
+def test_variant_publish_intent_migration_is_additive_and_idempotent():
+    with tempfile.TemporaryDirectory() as directory:
+        engine = create_engine(f"sqlite:///{Path(directory) / 'legacy-publish-intent.db'}")
+        event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
+        try:
+            legacy_tables = [table for table in Base.metadata.sorted_tables if table.name != "pinterest_publish_intents"]
+            Base.metadata.create_all(bind=engine, tables=legacy_tables)
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "CREATE TABLE pinterest_publish_intents ("
+                    "id INTEGER PRIMARY KEY, pin_id INTEGER NOT NULL, account_id INTEGER, "
+                    "account_identifier_snapshot VARCHAR(255) NOT NULL, board_id INTEGER, "
+                    "published_pin_id INTEGER, idempotency_key VARCHAR(64) NOT NULL UNIQUE, "
+                    "status VARCHAR(16) NOT NULL, error_summary TEXT, last_attempt_at DATETIME, "
+                    "created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, "
+                    "UNIQUE(pin_id, account_identifier_snapshot))"
+                ))
+                connection.execute(text(
+                    "INSERT INTO pinterest_publish_intents "
+                    "(id, pin_id, account_identifier_snapshot, idempotency_key, status, created_at, updated_at) "
+                    "VALUES (7, 11, 'legacy-account', 'legacy-key', 'published', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                ))
+
+            upgrade_analytics_schema(engine)
+            upgrade_analytics_schema(engine)
+
+            columns = {column["name"] for column in inspect(engine).get_columns("pinterest_publish_intents")}
+            assert "seo_ab_variant_id" in columns
+            with engine.connect() as connection:
+                row = connection.execute(text(
+                    "SELECT id, pin_id, account_identifier_snapshot, seo_ab_variant_id "
+                    "FROM pinterest_publish_intents WHERE id = 7"
+                )).one()
+                foreign_keys = connection.exec_driver_sql(
+                    "PRAGMA foreign_key_list('pinterest_publish_intents')"
+                ).all()
+            assert tuple(row) == (7, 11, "legacy-account", None)
+            assert any(item[2] == "seo_ab_variants" and item[3] == "seo_ab_variant_id" for item in foreign_keys)
         finally:
             engine.dispose()
 

@@ -719,6 +719,11 @@ class PinterestPublishIntent(Base):
     board_id: Mapped[int | None] = mapped_column(
         ForeignKey("pinterest_boards.id", ondelete="SET NULL"), nullable=True
     )
+    # Optional attribution for a deliberately requested SEO A/B variant publish.
+    # Legacy intents remain NULL and are never retroactively attributed.
+    seo_ab_variant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("seo_ab_variants.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     published_pin_id: Mapped[int | None] = mapped_column(
         ForeignKey("published_pinterest_pins.id", ondelete="SET NULL"), nullable=True, unique=True
     )
@@ -739,6 +744,7 @@ class PinterestPublishIntent(Base):
     account: Mapped[PinterestAccount | None] = relationship(back_populates="publish_intents")
     board: Mapped[PinterestBoard | None] = relationship(back_populates="publish_intents")
     published_pin: Mapped[PublishedPinterestPin | None] = relationship()
+    seo_ab_variant: Mapped["SEOABVariant | None"] = relationship()
 
 
 class AnalyticsCollectionRun(Base):
