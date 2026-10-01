@@ -1,9 +1,11 @@
-"""Pinterest v5 API adapter for the existing normalized analytics collector.
+"""Pinterest v5 adapter used by the opt-in analytics collection entry point.
 
-This module is intentionally not wired into a scheduler or application startup.
-It makes API-backed collection explicitly constructible while leaving the
-existing provider-neutral collector and its database model as the only storage
-path.
+The scheduled script ``scripts/collect_pinterest_analytics.py`` constructs this
+provider only after checking ``PINTEREST_ANALYTICS_COLLECTION_ENABLED``. The
+optional systemd oneshot/timer units provide the schedule, but are installed and
+enabled separately; the provider is not invoked by dashboard requests or normal
+application startup. Normalized collection and persistence remain in the
+provider-neutral collector and its existing database models.
 """
 
 from __future__ import annotations

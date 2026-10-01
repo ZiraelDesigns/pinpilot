@@ -60,7 +60,7 @@ API adapter'ı hesap/board okuma, Pin oluşturma/okuma/güncelleme/silme işleml
 
 Dashboard'daki **Generate Pin Ideas** bölümü bir ürün ve creative türü için yapılandırılmış Pinterest metni üretir. Desteklenen türler `product_focus`, `lifestyle`, `problem_solution`, `gift_idea` ve `minimalist` değerleridir. Creative'ler taslak olarak saklanır; kullanıcı onları düzenleyebilir, onaylayabilir veya silebilir. Bu aşama Pinterest'e Pin yayınlamaz.
 
-Varsayılan `AI_PROVIDER=mock`, ağ çağrısı ya da API anahtarı gerektirmeyen deterministik test sağlayıcısını kullanır. Gelecekte gerçek bir sağlayıcı eklenmesi için `AIContentProvider` abstraction'ı hazırdır; gerçek sağlayıcı seçildiğinde `AI_API_KEY` yalnızca yerel `.env` dosyasında tanımlanmalıdır. Aynı ürün/tür için hedef sayıya ulaşılmışsa yeni sağlayıcı çağrısı yapılmaz; bu maliyet ve tekrar içeriği önler.
+Varsayılan `AI_PROVIDER=mock`, ağ çağrısı ya da API anahtarı gerektirmeyen deterministik sağlayıcıyı kullanır. Gemini SEO içeriği için `AI_PROVIDER=gemini` açıkça seçilir ve `GEMINI_API_KEY` ile `GEMINI_MODEL` kullanılır; Gemini sağlayıcısı genel `AI_API_KEY` ayarını kullanmaz. `AI_API_KEY`, mevcut OpenAI görsel sağlayıcısı için genel yedek anahtar olarak kalır. Gerçek kimlik bilgilerini yalnızca korumalı ortam yapılandırmasında tutun; kaynak denetimine eklemeyin. Varsayılan `AI_IMAGE_PROVIDER=mock` da ağ çağrısı yapmaz; gerçek görsel sağlayıcısı ayrı ve açık bir yapılandırma değişikliği gerektirir.
 
 ## Current scope
 
@@ -113,14 +113,29 @@ do not stop the independent `pinpilot.service` web application.
 
 ## Optional Pinterest analytics collection
 
-The daily analytics collector and its systemd units are prepared, but are not
-enabled by default. `PINTEREST_ANALYTICS_COLLECTION_ENABLED` defaults to
-`false`; while it is false, the scheduled entry point exits before creating a
-Pinterest API provider or reading OAuth credentials. Do not enable collection
-until Pinterest API access and the required account permissions have been
-confirmed. When explicitly approved, set the flag in the service environment,
-install `deploy/systemd/pinpilot-analytics-collection.service` and
+The daily collector script and its systemd oneshot/timer units are present, but
+collection is opt-in and is not enabled by default. Set
+`PINTEREST_ANALYTICS_COLLECTION_ENABLED=false` explicitly in the example and
+keep the production setting false until Pinterest API approval and required
+account permissions are confirmed. With the flag false, the collector exits
+before constructing a Pinterest API provider or reading OAuth credentials;
+installing or enabling the timer alone does not enable collection. After
+approval, activation must be a separate, controlled operations decision: set
+the flag in the service environment, install
+`deploy/systemd/pinpilot-analytics-collection.service` and
 `deploy/systemd/pinpilot-analytics-collection.timer`, then enable the timer.
 The job refreshes the last seven complete UTC dates and reuses the persisted
 collection run for each account/date when retried. Its logs contain only run,
 failure, and snapshot counts.
+
+With the checked-in defaults (`AI_PROVIDER=mock`, `AI_IMAGE_PROVIDER=mock`,
+`PINTEREST_PUBLISH_ENABLED=false`, and
+`PINTEREST_ANALYTICS_COLLECTION_ENABLED=false`), PinPilot does not automatically
+start Gemini generation, Pinterest publishing/analytics collection, or external
+trend-data collection. Pinterest OAuth/read operations remain explicit,
+user-initiated flows when valid credentials are configured; they are separate
+from publishing and scheduled analytics. Seasonal assessments use calendar
+data and are not live trend measurements. This documentation/configuration
+work itself makes no external API calls. Pinterest API approval must be
+followed by explicit, controlled configuration and operational activation; it
+does not automatically enable publishing or analytics.
