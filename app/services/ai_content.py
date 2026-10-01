@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
+import socket
+import ssl
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol
@@ -31,6 +34,103 @@ class AIValidationError(AIContentError):
     A later generation may comply with the same prompt, so workers treat this
     separately from permanent configuration or product-data failures.
     """
+
+
+class AIProviderRequestError(AIContentError):
+    """Sanitized provider failure metadata; never retains a raw SDK exception."""
+
+    def __init__(
+        self,
+        category: str,
+        *,
+        http_status: int | None = None,
+        provider_code: str | None = None,
+        retryable: bool = False,
+    ) -> None:
+        self.category = category
+        self.http_status = http_status
+        self.provider_code = provider_code
+        self.retryable = retryable
+        safe_parts = [f"category={category}"]
+        if http_status is not None:
+            safe_parts.append(f"http_status={http_status}")
+        if provider_code is not None:
+            safe_parts.append(f"provider_code={provider_code}")
+        super().__init__("Gemini request failed (" + ", ".join(safe_parts) + ")")
+
+
+_logger = logging.getLogger(__name__)
+_SAFE_GEMINI_STATUS_CODES = {
+    "INVALID_ARGUMENT",
+    "UNAUTHENTICATED",
+    "PERMISSION_DENIED",
+    "RESOURCE_EXHAUSTED",
+    "NOT_FOUND",
+    "FAILED_PRECONDITION",
+    "INTERNAL",
+    "UNAVAILABLE",
+    "DEADLINE_EXCEEDED",
+}
+
+
+def _classify_gemini_exception(exc: Exception) -> AIProviderRequestError:
+    """Map SDK/transport exceptions to safe categories without reading messages."""
+    import httpx
+
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+
+    if any(isinstance(item, ssl.SSLError) for item in chain):
+        return AIProviderRequestError("tls_error", retryable=False)
+    if any(isinstance(item, socket.gaierror) for item in chain):
+        return AIProviderRequestError("dns_error", retryable=True)
+    if any(isinstance(item, httpx.TimeoutException) for item in chain):
+        return AIProviderRequestError("timeout", retryable=True)
+    if any(isinstance(item, httpx.ConnectError) for item in chain):
+        return AIProviderRequestError("network_error", retryable=True)
+
+    try:
+        from google.genai.errors import APIError
+    except ImportError:  # pragma: no cover - SDK is a declared dependency
+        APIError = ()  # type: ignore[assignment,misc]
+
+    api_error = next((item for item in chain if isinstance(item, APIError)), None) if APIError else None
+    status_code = getattr(api_error, "code", None)
+    status_code = status_code if isinstance(status_code, int) and 100 <= status_code <= 599 else None
+    raw_provider_code = getattr(api_error, "status", None)
+    provider_code = (
+        raw_provider_code
+        if isinstance(raw_provider_code, str) and raw_provider_code in _SAFE_GEMINI_STATUS_CODES
+        else None
+    )
+    if status_code == 401:
+        category, retryable = "authentication_error", False
+    elif status_code == 403:
+        category, retryable = "permission_error", False
+    elif status_code == 429:
+        category, retryable = "rate_limit", True
+    elif status_code == 404:
+        category, retryable = "model_or_endpoint_not_found", False
+    elif status_code is not None and 500 <= status_code <= 599:
+        category, retryable = "provider_server_error", True
+    elif status_code is not None and 400 <= status_code <= 499:
+        category, retryable = "request_rejected", False
+    elif any(isinstance(item, httpx.TimeoutException) for item in chain):
+        category, retryable = "timeout", True
+    elif any(isinstance(item, httpx.RequestError) for item in chain):
+        category, retryable = "network_error", True
+    else:
+        category, retryable = "unknown_provider_error", False
+
+    return AIProviderRequestError(
+        category,
+        http_status=status_code,
+        provider_code=provider_code,
+        retryable=retryable,
+    )
 
 
 SEO_PROMPT_VERSION = "pinterest_seo_v2"
@@ -139,9 +239,17 @@ class GeminiAIContentProvider:
                 ),
             )
         except Exception as exc:
-            raise AIContentError(
-                f"Gemini içerik üretimi başarısız: {exc}"
-            ) from exc
+            failure = _classify_gemini_exception(exc)
+            # Log only allowlisted classification fields. SDK messages/response
+            # bodies can contain sensitive request metadata and are never logged.
+            _logger.warning(
+                "Gemini request failed category=%s http_status=%s provider_code=%s retryable=%s",
+                failure.category,
+                failure.http_status,
+                failure.provider_code,
+                failure.retryable,
+            )
+            raise failure from None
 
         text = getattr(response, "text", None)
 
@@ -412,6 +520,9 @@ class AIContentService:
                     self._prompt(context, creative_type.value, variation, previous_seo)
                 )
             except Exception as exc:
+                if isinstance(exc, AIProviderRequestError):
+                    self._active_generation["error_category"] = f"gemini_{exc.category}"[:64]
+                    raise
                 provider_message = str(exc).casefold()
                 if any(marker in provider_message for marker in (
                     "429", "rate limit", "resource_exhausted", "timeout", "temporar",

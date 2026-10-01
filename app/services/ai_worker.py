@@ -60,6 +60,9 @@ def is_retryable_error(error: Exception) -> bool:
     # A fresh generation can comply; max_retries still bounds repeated output.
     if isinstance(error, AIValidationError):
         return True
+    classified_retryable = getattr(error, "retryable", None)
+    if isinstance(classified_retryable, bool):
+        return classified_retryable
     message = str(error).casefold()
     if any(value in message for value in ("429", "rate limit", "resource_exhausted", "timeout", "temporar", "connection")):
         return True
