@@ -58,7 +58,15 @@ def _snapshot(generation: SEOGeneration) -> dict[str, Any]:
     # unrelated fields must never cross into experiment snapshots.
     source = generation.output_snapshot
     keys = ("title", "description", "call_to_action", "keywords", "seo_metadata", "creative_type")
-    return json.loads(json.dumps({key: source[key] for key in keys if key in source}, ensure_ascii=False))
+    snapshot = {key: source[key] for key in keys if key in source and key != "seo_metadata"}
+    seo = source.get("seo_metadata")
+    if isinstance(seo, dict):
+        seo_keys = (
+            "primary_keyword", "secondary_keywords", "long_tail_keywords",
+            "audience_keywords", "use_case_keywords", "search_intents", "creative_angle",
+        )
+        snapshot["seo_metadata"] = {key: seo[key] for key in seo_keys if key in seo}
+    return json.loads(json.dumps(snapshot, ensure_ascii=False))
 
 
 def _source_provenance(db: Session, generation: SEOGeneration, learning_ids: list[int]) -> dict[str, Any]:
@@ -437,13 +445,23 @@ def compare_seo_ab_experiment(
             for key, values in variant_publications.items()
         }
     baseline, baseline_ids, baseline_n = _aggregate_publications(db, baseline_pubs, period_start, period_end, metric_name)
+    baseline_aggregate_value = baseline.get(metric_name)
+    base_value = (
+        baseline_aggregate_value / baseline_n
+        if metric_name in _COUNT_METRICS and baseline_aggregate_value is not None and baseline_n
+        else baseline_aggregate_value
+    )
     variants = []
     all_ids = set(baseline_ids)
     for variant in experiment.variants:
         metrics, snapshot_ids, sample_count = _aggregate_publications(db, variant_publications[variant.id], period_start, period_end, metric_name)
         all_ids.update(snapshot_ids)
-        value = metrics.get(metric_name)
-        base_value = baseline.get(metric_name)
+        aggregate_value = metrics.get(metric_name)
+        value = (
+            aggregate_value / sample_count
+            if metric_name in _COUNT_METRICS and aggregate_value is not None and sample_count
+            else aggregate_value
+        )
         lift = (value - base_value) / abs(base_value) if value is not None and base_value not in (None, 0) else None
         sufficient = sample_count >= MIN_COMPARISON_SAMPLE and baseline_n >= MIN_COMPARISON_SAMPLE
         variants.append({
@@ -452,6 +470,7 @@ def compare_seo_ab_experiment(
             "variant_type": variant.variant_type,
             "quality_status": variant.quality_status,
             "metrics": metrics,
+            "aggregate_metric_value": aggregate_value,
             "sample_count": sample_count,
             "metric_value": value,
             "baseline_value": base_value,
@@ -469,11 +488,18 @@ def compare_seo_ab_experiment(
     result = {
         "status": "observed" if all_ids else "insufficient_data",
         "metric_name": metric_name,
+        "metric_semantics": "mean_per_distinct_published_pin_for_count_metrics; aggregated_observed_rate_for_rate_metrics",
         "sample_unit": "distinct_published_pin_with_daily_snapshot",
         "snapshot_selection": "latest_fetched_daily_snapshot_per_published_pin_and_metric_date",
         "minimum_sample_for_descriptive_confidence": MIN_COMPARISON_SAMPLE,
         "account_scope": account_identifier or (f"account_id:{account_id}" if account_id is not None else (next(iter(identity_keys)) if identity_keys else None)),
-        "baseline": {"metrics": baseline, "sample_count": baseline_n, "source_published_pin_ids": [p.id for p in baseline_pubs]},
+        "baseline": {
+            "metrics": baseline,
+            "sample_count": baseline_n,
+            "aggregate_metric_value": baseline_aggregate_value,
+            "metric_value": base_value,
+            "source_published_pin_ids": [p.id for p in baseline_pubs],
+        },
         "cohort_publication_ids": cohort_ids,
         "variants": variants,
         "leading_signal": ({"variant_id": leading["variant_id"], "reason": "highest_observed_metric_only"} if leading else None),

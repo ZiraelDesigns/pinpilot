@@ -105,11 +105,14 @@ def test_experiment_and_variant_snapshots_whitelist_seo_fields_not_credentials()
         generation = _generation(db)
         generation.output_snapshot["access_token"] = "must-not-be-copied"
         generation.output_snapshot["client_secret"] = "must-not-be-copied"
+        generation.output_snapshot["seo_metadata"]["api_key"] = "must-not-be-copied"
         experiment = create_seo_ab_experiment(db, generation.id, hypothesis="Check snapshot safety")
         assert "access_token" not in experiment.source_snapshot
         assert "client_secret" not in experiment.source_snapshot
+        assert "api_key" not in experiment.source_snapshot["seo_metadata"]
         assert all("access_token" not in variant.output_snapshot for variant in experiment.variants)
         assert all("client_secret" not in variant.output_snapshot for variant in experiment.variants)
+        assert all("api_key" not in variant.output_snapshot["seo_metadata"] for variant in experiment.variants)
 
 
 def test_source_board_seasonal_and_learning_context_is_traced_without_recalculation():
@@ -206,8 +209,10 @@ def test_publication_link_requires_explicit_variant_provenance_and_comparison_is
         assert first.comparison_version == COMPARISON_VERSION
         assert row["metrics"]["outbound_clicks"] == 25
         assert row["metrics"]["pin_clicks"] is None
-        assert row["relative_lift"] == 1.5
+        assert row["relative_lift"] == 0.25
         assert row["sample_count"] == 2
+        assert row["aggregate_metric_value"] == 25
+        assert row["metric_value"] == 12.5
         assert row["confidence"] == "insufficient_data"
         assert first.result_snapshot["winner_selected"] is False
         assert first.result_snapshot["decision"].endswith("no_automatic_winner_or_optimization")
