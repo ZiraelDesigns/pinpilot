@@ -17,6 +17,17 @@ def test_health_endpoint():
     assert response.json() == {"status": "ok", "service": "PinPilot"}
 
 
+def test_privacy_policy_is_served_from_public_route():
+    with TestClient(app) as client:
+        response = client.get("/privacy-policy.html")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Privacy Policy" in response.text
+    assert "https://ziraelautomation.vesvada.store/privacy-policy.html" in response.text
+    assert "pinpilot.vesvada.store" not in response.text
+
+
 def test_dashboard_shows_empty_counts():
     with tempfile.TemporaryDirectory() as tmpdir:
         database_path = Path(tmpdir) / "test.db"

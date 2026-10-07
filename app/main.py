@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, inspect, select, text
@@ -102,6 +102,12 @@ templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": settings.app_name}
+
+
+@app.get("/privacy-policy.html", response_class=FileResponse)
+def privacy_policy() -> FileResponse:
+    """Serve the repository's public privacy policy through the existing app."""
+    return FileResponse(PROJECT_ROOT / "privacy-policy.html", media_type="text/html")
 
 
 @app.get("/", response_class=HTMLResponse)
