@@ -1,12 +1,16 @@
 import tempfile
+from datetime import datetime, time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.database import Base, get_db
-from app.main import app
+from app.database import Base, SessionLocal, get_db
+from app.main import app, dashboard as dashboard_route
+from app.models import Pin, PinCreative, Product
+from app.models.core import PinCreativeStatus, PinCreativeType, PinStatus
+from app.security import AuthPrincipal
 
 
 def test_health_endpoint():
@@ -69,3 +73,59 @@ def test_dashboard_shows_empty_counts():
     assert 'id="mockup-scheduled-pins-count">0<' in response.text
     assert 'id="ai-scheduled-pins-count">0<' in response.text
     assert 'id="pending-ai-jobs-count">0<' in response.text
+
+
+def test_dashboard_renders_persisted_content_portfolio():
+    from starlette.requests import Request
+
+    db = SessionLocal()
+    product = Product(title="Portfolio product")
+    db.add(product)
+    db.flush()
+    creative = PinCreative(
+        product_id=product.id, creative_type=PinCreativeType.LIFESTYLE.value,
+        title="Portfolio creative", description="Test description", keywords=["quiet garden"],
+        call_to_action="Explore", image_path="https://images.example.test/portfolio.jpg",
+        source_type="mockup", destination_url="https://example.test/item",
+        status=PinCreativeStatus.DRAFT.value, generation_key=f"dashboard-portfolio:{product.id}",
+    )
+    db.add(creative)
+    db.flush()
+    db.add(Pin(
+        product_id=product.id, creative_id=creative.id, title="Quiet garden decor",
+        status=PinStatus.SCHEDULED.value,
+        scheduled_for=datetime.combine(datetime.now().date(), time(hour=15)),
+        portfolio_snapshot={
+            "version": "smart_content_portfolio_v1", "final_score": 84,
+            "opportunity_score": 78, "selection_reason": "Yüksek pano uyumu; kontrollü keşif seçimi",
+            "creative_type": PinCreativeType.LIFESTYLE.value, "creative_angle": "calm home",
+            "primary_keyword": "quiet garden decor", "board": {"id": 1, "name": "Garden ideas"},
+            "exploration": True, "learned": False, "seasonal": True,
+            "portfolio_summary": {
+                "selected_count": 1, "total_candidates": 4, "keyword_diversity": 1,
+                "keyword_distribution": {"quiet garden decor": 1},
+                "creative_type_distribution": {"lifestyle": 1},
+                "creative_angle_distribution": {"calm home": 1},
+                "board_distribution": {"1": 1}, "exploration_count": 1,
+                "learned_positive_count": 0, "seasonal_count": 1,
+            },
+        },
+    ))
+    db.commit()
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    try:
+        response = dashboard_route(
+            request=request,
+            db=db,
+            principal=AuthPrincipal(username="test-admin", role="admin", csrf_token="test-csrf-token"),
+        )
+        body = response.body.decode()
+    finally:
+        db.close()
+
+    assert response.status_code == 200
+    assert "Bugünün İçerik Portföyü" in body
+    assert "Quiet garden decor" in body
+    assert "84 / 100" in body
+    assert "Garden ideas" in body
+    assert "Keşif" in body

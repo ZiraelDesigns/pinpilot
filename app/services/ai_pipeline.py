@@ -266,8 +266,10 @@ def enqueue_daily_generation_job(db: Session) -> bool:
 
 def dashboard_pipeline_status(db: Session) -> dict[str, int | bool]:
     counts = quota_counts(db)
+    control = db.get(AIPipelineControl, 1)
     return {
-        "enabled": pipeline_enabled(db),
+        # Read-only status must not create the singleton row when state is absent.
+        "enabled": bool(control.enabled) if control is not None else False,
         **counts,
         "pending_jobs": int(db.scalar(select(func.count(PinGenerationJob.id)).where(
             PinGenerationJob.status == "pending"

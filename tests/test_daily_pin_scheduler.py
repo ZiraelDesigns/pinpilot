@@ -210,3 +210,29 @@ def test_used_creative_and_same_product_image_are_never_scheduled_twice():
         finally:
             _cleanup(db, product)
             db.close()
+
+
+def test_scheduler_persists_source_image_dedup_across_days_when_pin_image_is_transformed():
+    with TestClient(app):
+        db = SessionLocal()
+        product, creatives = _product_with_creatives(db, mockup_count=2)
+        source_url = "https://images.example.test/shared-source.jpg"
+        creatives[0].source_image_url = source_url
+        creatives[0].image_path = "/media/generated/first-transformed.png"
+        creatives[1].source_image_url = source_url
+        creatives[1].image_path = "/media/generated/second-transformed.png"
+        db.add(Pin(
+            product_id=product.id,
+            creative_id=creatives[0].id,
+            title="Previously scheduled",
+            image_path=creatives[0].image_path,
+            status=PinStatus.SCHEDULED.value,
+            scheduled_for=datetime(2035, 1, 2, 9),
+        ))
+        db.commit()
+        try:
+            result = DailyPinScheduler(db, daily_target=1).schedule_daily(date(2035, 1, 3))
+            assert result.prepared == ()
+        finally:
+            _cleanup(db, product)
+            db.close()

@@ -6,10 +6,11 @@ from fastapi.testclient import TestClient
 from app.database import SessionLocal
 from app.config import settings
 from app.main import app
-from app.models import EtsyAccount, EtsyListing, PinCreative, PinGenerationJob, Product
+from app.models import EtsyAccount, EtsyListing, PinCreative, PinGenerationJob, PinterestAccount, PinterestBoard, Product, SEOGeneration
 from app.models.core import PinCreativeSourceType, PinCreativeType
 from app.services.ai_content import AIContentError, AIContentService, MockAIContentProvider
 from app.services.etsy import EtsyApiService
+from app.security import AuthPrincipal
 
 
 class StaticProvider:
@@ -362,6 +363,9 @@ def test_seo_v2_prompt_includes_type_strategy_and_previous_context():
 
     payload = json.loads(prompt.rsplit("INPUT_JSON=", 1)[1])
     assert payload["previous_ai_creatives"] == previous
+    assert set(payload) == {"product", "creative_type", "product_type_hint", "variation", "previous_ai_creatives", "candidate_count"}
+    assert payload["candidate_count"] == 3
+    assert not any(metric in prompt for metric in ("outbound_clicks", "impressions", "save_rate", "observed_performance_score"))
     assert "gifting occasion" in prompt
     assert "primary_keyword" in prompt
 
@@ -370,6 +374,131 @@ def test_seo_v2_prompt_includes_type_strategy_and_previous_context():
         for creative_type in PinCreativeType
     }
     assert len(set(strategies.values())) == len(PinCreativeType)
+
+
+def test_mock_generation_selects_and_preserves_three_seo_candidates(monkeypatch):
+    monkeypatch.setattr(settings, "ai_image_provider", "mock")
+    monkeypatch.setattr(settings, "seo_candidate_count", 3)
+    from starlette.requests import Request
+    from app.main import dashboard
+
+    db = SessionLocal()
+    try:
+        product = _product(db)
+        account = PinterestAccount(account_name="Candidate test", account_identifier="candidate-test", is_active=True)
+        db.add(account)
+        db.flush()
+        db.add(PinterestBoard(account=account, board_id="candidate-board", name="Handmade Candle Ideas",
+                              description="Soy candle and quiet evening decor", source="local_board_metadata"))
+        db.commit()
+        creative = AIContentService(db, MockAIContentProvider()).generate(
+            product, PinCreativeType.PRODUCT_FOCUS, 1
+        )[0]
+        generation = db.query(SEOGeneration).filter_by(creative_id=creative.id, status="completed").one()
+        selection = generation.output_snapshot["seo_candidate_selection"]
+        assert selection["candidate_count"] == 3
+        assert sum(candidate["selected"] for candidate in selection["candidates"]) == 1
+        assert all(candidate["snapshot"]["title"] for candidate in selection["candidates"])
+        assert all(candidate["evaluation"]["quality"]["validation"]["status"] != "FAIL"
+                   for candidate in selection["candidates"] if candidate["selected"])
+        assert selection["selected_candidate_id"]
+        assert selection["selected_reason"]
+        assert all(candidate["evaluation"]["performance_learning"]["used_in_ai_prompt"] is False
+                   for candidate in selection["candidates"])
+        assert selection["candidates"][0]["evaluation"]["best_board"]["score"] > 0
+        assert all(candidate["evaluation"]["seasonal"]["external_trends"]["status"] == "not_collected"
+                   for candidate in selection["candidates"])
+        from app.services.seo_candidate_optimizer import evaluate_seo_candidates
+        candidate_inputs = [
+            {"candidate_index": index, "snapshot": candidate["snapshot"],
+             "prompt_version": candidate["prompt_version"], "schema_version": candidate["schema_version"]}
+            for index, candidate in enumerate(selection["candidates"])
+        ]
+        evaluated_a = evaluate_seo_candidates(
+            db, product=product, context=AIContentService(db).product_context(product),
+            creative_type=creative.creative_type, candidates=candidate_inputs, provider="mock", model="unknown",
+            generated_at="2026-01-01T00:00:00+00:00", previous_creatives=[],
+        )
+        evaluated_b = evaluate_seo_candidates(
+            db, product=product, context=AIContentService(db).product_context(product),
+            creative_type=creative.creative_type, candidates=candidate_inputs, provider="mock", model="unknown",
+            generated_at="2026-01-01T00:00:00+00:00", previous_creatives=[],
+        )
+        assert [(row["candidate_id"], row["evaluation"]["final_score"]) for row in evaluated_a] == [
+            (row["candidate_id"], row["evaluation"]["final_score"]) for row in evaluated_b
+        ]
+        request = Request({"type": "http", "method": "GET", "path": "/", "headers": [],
+                           "query_string": b"", "server": ("testserver", 443),
+                           "client": ("testclient", 1234), "scheme": "https", "http_version": "1.1"})
+        response = dashboard(request, db=db, principal=AuthPrincipal(
+            username="test-admin", role="admin", csrf_token="test-csrf-token"
+        ))
+        assert response.status_code == 200
+        assert "SEO adayı değerlendirildi" in response.body.decode("utf-8")
+    finally:
+        db.close()
+
+
+def test_candidate_count_is_configurable_in_provider_prompt(monkeypatch):
+    from app.services.ai_content import ProductContext
+
+    context = ProductContext("Handmade Candle", "Soy candle", ["candle"], None, None, [])
+    prompt = AIContentService._prompt(context, "product_focus", 1, candidate_count=2)
+    payload = json.loads(prompt.rsplit("INPUT_JSON=", 1)[1])
+    assert payload["candidate_count"] == 2
+    assert "Create 2 distinct" in prompt
+    assert len(json.loads(MockAIContentProvider().generate_json(prompt))["candidates"]) == 2
+
+
+def test_candidate_optimizer_rejects_over_limit_option_and_selects_valid_one():
+    with SessionLocal() as db:
+        product = _product(db)
+        valid = _seo_response()
+        invalid = _seo_response(title="Handmade Candle " + "x" * 100)
+        provider = StaticProvider(json.dumps({"candidates": [invalid, valid]}))
+        creative = AIContentService(db, provider).generate(product, PinCreativeType.PRODUCT_FOCUS, 1)[0]
+        generation = db.query(SEOGeneration).filter_by(creative_id=creative.id, status="completed").one()
+        candidates = generation.output_snapshot["seo_candidate_selection"]["candidates"]
+        assert len(candidates) == 2
+        assert candidates[0]["status"] == "rejected"
+        assert candidates[0]["evaluation"]["rejection_reasons"]
+        assert candidates[0]["ranking_position"] is not None
+        assert candidates[1]["selected"] is True
+        assert creative.title == candidates[1]["snapshot"]["title"]
+
+
+def test_candidate_optimizer_does_not_mix_boards_from_multiple_accounts():
+    from app.services.seo_candidate_optimizer import evaluate_seo_candidates
+
+    with SessionLocal() as db:
+        product = _product(db)
+        first = PinterestAccount(account_name="First", account_identifier="first", is_active=True)
+        second = PinterestAccount(account_name="Second", account_identifier="second", is_active=True)
+        db.add_all([first, second])
+        db.flush()
+        db.add_all([
+            PinterestBoard(account_id=first.id, board_id="first-board", name="Handmade Candle Ideas",
+                           description="Soy candles for quiet evenings", source="local_board_metadata"),
+            PinterestBoard(account_id=second.id, board_id="second-board", name="Handmade Candle Ideas",
+                           description="Soy candles for quiet evenings", source="local_board_metadata"),
+        ])
+        db.commit()
+
+        evaluated = evaluate_seo_candidates(
+            db,
+            product=product,
+            context=AIContentService(db).product_context(product),
+            creative_type=PinCreativeType.PRODUCT_FOCUS.value,
+            candidates=[{"candidate_index": 0, "snapshot": _seo_response()}],
+            provider="mock",
+            model="test-model",
+            generated_at="2026-01-01T00:00:00+00:00",
+            previous_creatives=[],
+        )
+
+    evaluation = evaluated[0]["evaluation"]
+    assert evaluation["best_board"] is None
+    assert evaluation["board_matches"] == []
 
 
 def test_seo_v2_rejects_duplicate_primary_keyword_from_previous_creative(monkeypatch):

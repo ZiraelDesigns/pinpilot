@@ -3,8 +3,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 
-from app.database import SessionLocal
+from app.database import SessionLocal, engine
 from app.main import app
 from app.models import (
     AIDailyQuotaSlot,
@@ -45,14 +46,51 @@ def test_pipeline_defaults_off_and_toggle_is_persistent():
         db = SessionLocal()
         db.delete(db.get(AIPipelineControl, 1))
         db.commit()
+        assert db.get(AIPipelineControl, 1) is None
         db.close()
-        status = client.get("/pipeline/status")
+        writes = []
+
+        def record_write(_conn, _cursor, statement, _parameters, _context, _executemany):
+            if statement.lstrip().split(maxsplit=1)[0].upper() in {"INSERT", "UPDATE", "DELETE", "REPLACE"}:
+                writes.append(statement)
+
+        event.listen(engine, "before_cursor_execute", record_write)
+        try:
+            status = client.get("/pipeline/status")
+        finally:
+            event.remove(engine, "before_cursor_execute", record_write)
         assert status.status_code == 200
         assert status.json()["enabled"] is False
+        assert writes == []
+        with SessionLocal() as db:
+            assert db.get(AIPipelineControl, 1) is None
         assert client.post("/pipeline/toggle", json={"enabled": True}).json()["enabled"] is True
         assert client.post("/pipeline/toggle", json={"enabled": False}).json()["enabled"] is False
         assert client.get("/pipeline/status").json()["enabled"] is False
         assert client.post("/pipeline/toggle", json={"enabled": True}).json()["enabled"] is True
+
+
+def test_pipeline_status_reads_existing_control_without_modifying_it():
+    from datetime import datetime
+
+    expected_updated_at = datetime(2026, 10, 1, 12, 30)
+    with SessionLocal() as db:
+        control = db.get(AIPipelineControl, 1)
+        assert control is not None
+        control.enabled = True
+        control.updated_at = expected_updated_at
+        db.commit()
+
+    with TestClient(app) as client:
+        response = client.get("/pipeline/status")
+
+    assert response.status_code == 200
+    assert response.json()["enabled"] is True
+    with SessionLocal() as db:
+        control = db.get(AIPipelineControl, 1)
+        assert control is not None
+        assert control.enabled is True
+        assert control.updated_at == expected_updated_at
 
 
 def test_paused_pipeline_blocks_manual_generation_and_keeps_pending_job():

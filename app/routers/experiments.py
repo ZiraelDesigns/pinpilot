@@ -22,7 +22,7 @@ from app.services.experiments import (
     experiment_summaries,
     transition_experiment,
 )
-from app.security import get_principal, require_admin_csrf
+from app.security import get_principal, require_admin_csrf, require_admin_read
 from app.services.pinterest_publisher import (
     DisabledPinterestPinPublishingProvider,
     PinterestApiPublishingProvider,
@@ -203,12 +203,7 @@ def _input_error(exc: ExperimentInputError) -> HTTPException:
 
 
 def _admin_read(request: Request):
-    principal = get_principal(request)
-    if principal is None:
-        raise HTTPException(status_code=401, detail="Giriş gerekli.")
-    if principal.role != "admin":
-        raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
-    return principal
+    return require_admin_read(request)
 
 
 def _seo_ab_experiment_data(experiment: SEOABExperiment) -> dict:
@@ -284,7 +279,7 @@ def create_assignment(experiment_id: int, payload: AssignmentCreate, db: Session
         raise _input_error(exc) from exc
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_admin_read)])
 def list_all(db: Session = Depends(get_db)):
     return {"items": experiment_summaries(db)}
 
@@ -338,7 +333,7 @@ def get_seo_ab_experiment(
     return result
 
 
-@router.get("/{experiment_id}")
+@router.get("/{experiment_id}", dependencies=[Depends(require_admin_read)])
 def get_detail(experiment_id: int, db: Session = Depends(get_db)):
     experiment = experiment_detail(db, experiment_id)
     if experiment is None:

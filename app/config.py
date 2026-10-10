@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -42,6 +43,8 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
+    # Number of SEO options requested for each creative; kept bounded for cost/safety.
+    seo_candidate_count: int = Field(default=3, ge=1, le=10)
     ai_image_provider: str = "mock"
     openai_image_model: str = "gpt-image-2"
     generated_media_dir: str = "media/generated"

@@ -24,18 +24,25 @@ from app.database import Base, engine, SessionLocal  # noqa: E402
 from app.analytics_migrations import upgrade_analytics_schema  # noqa: E402
 import app.models  # noqa: E402,F401 - registers ORM tables before create_all.
 from app.main import app  # noqa: E402
-from app.security import AuthPrincipal, require_admin_csrf  # noqa: E402
+from app.security import AuthPrincipal, get_principal, require_admin_csrf, require_admin_read  # noqa: E402
 from app.services.ai_pipeline import set_pipeline_enabled  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def legacy_route_tests_use_an_authorized_admin():
     """Keep non-auth route tests focused; dedicated security tests remove this override."""
-    app.dependency_overrides[require_admin_csrf] = lambda: AuthPrincipal(
+    principal = AuthPrincipal(
         username="test-admin", role="admin", csrf_token="test-csrf-token"
     )
+    app.dependency_overrides[require_admin_csrf] = lambda: AuthPrincipal(
+        username=principal.username, role=principal.role, csrf_token=principal.csrf_token
+    )
+    app.dependency_overrides[require_admin_read] = lambda: principal
+    app.dependency_overrides[get_principal] = lambda: principal
     yield
     app.dependency_overrides.pop(require_admin_csrf, None)
+    app.dependency_overrides.pop(require_admin_read, None)
+    app.dependency_overrides.pop(get_principal, None)
 
 
 @pytest.fixture(autouse=True)

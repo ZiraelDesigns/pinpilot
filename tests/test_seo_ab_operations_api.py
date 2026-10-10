@@ -24,7 +24,7 @@ from app.models import (
 )
 from app.models.core import PinStatus
 from app.routers.experiments import get_seo_ab_publisher
-from app.security import require_admin_csrf
+from app.security import get_principal, require_admin_csrf, require_admin_read
 from app.database import get_db
 from app.services.keyword_intelligence import ensure_keyword_intelligence
 from app.services.pinterest_publisher import PinterestPinPublishResult, PinterestPublisher
@@ -99,6 +99,8 @@ def _csrf_login(monkeypatch, client):
     monkeypatch.setattr(settings, "app_session_ttl_seconds", 28800)
     monkeypatch.setattr(settings, "app_session_cookie_secure", True)
     app.dependency_overrides.pop(require_admin_csrf, None)
+    app.dependency_overrides.pop(require_admin_read, None)
+    app.dependency_overrides.pop(get_principal, None)
     page = client.get("/auth/login")
     token = re.search(r'name="_csrf" value="([^"]+)"', page.text).group(1)
     response = client.post(
@@ -114,6 +116,8 @@ def _csrf_login(monkeypatch, client):
 def test_seo_ab_operations_require_admin_and_csrf(monkeypatch):
     generation_id, *_ = _generation()
     app.dependency_overrides.pop(require_admin_csrf, None)
+    app.dependency_overrides.pop(require_admin_read, None)
+    app.dependency_overrides.pop(get_principal, None)
     with TestClient(app, base_url="https://testserver") as client:
         unauthenticated = _create_draft(client, generation_id)
         assert unauthenticated.status_code == 401

@@ -84,8 +84,8 @@ def test_successful_seo_generation_persists_version_model_timestamp_and_keyword_
         assert provenance.product_id == product.id
         assert provenance.provider == "test-provider"
         assert provenance.model_name == "test-model-v7"
-        assert provenance.prompt_version == "pinterest_seo_v2"
-        assert provenance.schema_version == "pinterest_seo_metadata_v2"
+        assert provenance.prompt_version == "pinterest_seo_v2_candidates_v1"
+        assert provenance.schema_version == "pinterest_seo_candidate_set_v1"
         assert provenance.status == "completed"
         assert provenance.started_at <= provenance.completed_at
         assert provenance.output_snapshot["title"] == creative.title

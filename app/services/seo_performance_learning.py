@@ -32,10 +32,13 @@ from app.models import (
 )
 
 
-PERFORMANCE_LEARNING_VERSION = "performance_learning_v2"
+PERFORMANCE_LEARNING_VERSION = "performance_learning_v3"
 MIN_BASELINE_SAMPLES = 3
 LOW_CONFIDENCE_SAMPLES = 3
 ADEQUATE_CONFIDENCE_SAMPLES = 10
+OBSERVATION_HALF_LIFE_DAYS = 90
+POSITIVE_RELATIVE_SCORE = 55.0
+NEGATIVE_RELATIVE_SCORE = 45.0
 _COUNT_METRICS = ("impressions", "saves", "pin_clicks", "outbound_clicks", "engagements")
 _RATE_METRICS = ("engagement_rate", "pin_click_rate", "outbound_click_rate")
 
@@ -97,6 +100,15 @@ def _mean_known(rows: list[AnalyticsSnapshot], field: str) -> float | None:
     return round(sum(values) / len(values), 8) if values else None
 
 
+def _observation_weight(row: AnalyticsSnapshot, reference_date: date) -> float:
+    observed_date = row.metric_date
+    if observed_date is None:
+        boundary = row.period_end or row.fetched_at or row.recorded_at
+        observed_date = _as_naive_utc(boundary).date() if boundary else reference_date
+    age_days = max(0, (reference_date - observed_date).days)
+    return 2 ** (-age_days / OBSERVATION_HALF_LIFE_DAYS)
+
+
 def _confidence(samples: int) -> str:
     if samples < LOW_CONFIDENCE_SAMPLES:
         return "insufficient_data"
@@ -134,7 +146,7 @@ def _canonical_fingerprint(
     return hashlib.sha256(json.dumps(source, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def _pin_metrics(rows: list[AnalyticsSnapshot]) -> dict[str, Any]:
+def _pin_metrics(rows: list[AnalyticsSnapshot], *, reference_date: date) -> dict[str, Any]:
     result: dict[str, Any] = {field: _sum_known(rows, field) for field in _COUNT_METRICS}
     result.update({field: _mean_known(rows, field) for field in _RATE_METRICS})
     impressions = result["impressions"]
@@ -151,6 +163,43 @@ def _pin_metrics(rows: list[AnalyticsSnapshot]) -> dict[str, Any]:
     result["save_rate"] = result.get("save_rate")
     result["metric_coverage"] = {
         field: sum(getattr(row, field) is not None for row in rows) for field in (*_COUNT_METRICS, *_RATE_METRICS)
+    }
+    weighted: dict[str, float | None] = {}
+    weights = [_observation_weight(row, reference_date) for row in rows]
+    for field in _COUNT_METRICS:
+        known = [(float(getattr(row, field)), weight) for row, weight in zip(rows, weights)
+                 if getattr(row, field) is not None]
+        weighted[field] = (
+            round(sum(value * weight for value, weight in known), 8)
+            if known and len(known) == len(rows) else None
+        )
+    weighted_rates: dict[str, float | None] = {}
+    for field, numerator in (("save_rate", "saves"), ("pin_click_rate", "pin_clicks"),
+                             ("outbound_click_rate", "outbound_clicks")):
+        impressions = weighted.get("impressions")
+        count = weighted.get(numerator)
+        if impressions is not None and impressions > 0 and count is not None:
+            weighted_rates[field] = round(count / impressions, 8)
+        else:
+            reported = [(float(getattr(row, field)), weight) for row, weight in zip(rows, weights)
+                        if field != "save_rate" and getattr(row, field) is not None]
+            denominator = sum(weight for _, weight in reported)
+            weighted_rates[field] = (round(sum(value * weight for value, weight in reported) / denominator, 8)
+                                     if denominator else None)
+    engagement = [(float(row.engagement_rate), weight) for row, weight in zip(rows, weights)
+                  if row.engagement_rate is not None]
+    denominator = sum(weight for _, weight in engagement)
+    weighted_rates["engagement_rate"] = (
+        round(sum(value * weight for value, weight in engagement) / denominator, 8) if denominator else None
+    )
+    result["decayed_metrics"] = weighted
+    result["decayed_rates"] = weighted_rates
+    result["observation_weights"] = {
+        "reference_date": reference_date.isoformat(),
+        "min": round(min(weights), 8) if weights else None,
+        "max": round(max(weights), 8) if weights else None,
+        "method": "exponential_half_life",
+        "half_life_days": OBSERVATION_HALF_LIFE_DAYS,
     }
     return result
 
@@ -177,29 +226,69 @@ def _aggregate(samples: list[dict[str, Any]], baseline: dict[str, Any] | None) -
     engagement_values = [sample["metrics"].get("engagement_rate") for sample in samples
                          if sample["metrics"].get("engagement_rate") is not None]
     sums["engagement_rate"] = round(sum(engagement_values) / len(engagement_values), 8) if engagement_values else None
-    rate_names = ("save_rate", "pin_click_rate", "outbound_click_rate")
+    decayed_metrics: dict[str, float | None] = {}
+    for field in _COUNT_METRICS:
+        values = [(sample["metrics"].get("decayed_metrics", {}).get(field)) for sample in samples]
+        known = [value for value in values if value is not None]
+        decayed_metrics[field] = round(sum(known), 8) if known else None
+    decayed_rates: dict[str, float | None] = {}
+    for field, numerator in (("save_rate", "saves"), ("pin_click_rate", "pin_clicks"),
+                             ("outbound_click_rate", "outbound_clicks")):
+        denominator, value = decayed_metrics.get("impressions"), decayed_metrics.get(numerator)
+        if denominator is not None and denominator > 0 and value is not None:
+            decayed_rates[field] = round(value / denominator, 8)
+        else:
+            reported = [sample["metrics"].get("decayed_rates", {}).get(field) for sample in samples
+                        if sample["metrics"].get("decayed_rates", {}).get(field) is not None]
+            decayed_rates[field] = round(sum(reported) / len(reported), 8) if reported else None
+    decayed_engagement = [sample["metrics"].get("decayed_rates", {}).get("engagement_rate") for sample in samples
+                          if sample["metrics"].get("decayed_rates", {}).get("engagement_rate") is not None]
+    decayed_rates["engagement_rate"] = (
+        round(sum(decayed_engagement) / len(decayed_engagement), 8) if decayed_engagement else None
+    )
+    rate_names = ("save_rate", "pin_click_rate", "outbound_click_rate", "engagement_rate")
     numerators = {"save_rate": "saves", "pin_click_rate": "pin_clicks", "outbound_click_rate": "outbound_clicks"}
     count = len(samples)
     relative = []
+    relative_lifts: dict[str, float | None] = {}
     rate_sample_counts = {
         field: sum(sample["metrics"].get("impressions") is not None
                    and sample["metrics"].get(numerator) is not None for sample in samples)
         for field, numerator in numerators.items()
     }
+    rate_sample_counts["engagement_rate"] = sum(
+        sample["metrics"].get("engagement_rate") is not None for sample in samples
+    )
     if baseline and count >= MIN_BASELINE_SAMPLES and baseline.get("sample_count", 0) >= MIN_BASELINE_SAMPLES:
         for field in rate_names:
-            value, base = sums.get(field), baseline.get(field)
-            if (rate_sample_counts[field] >= MIN_BASELINE_SAMPLES
-                    and baseline.get("rate_sample_counts", {}).get(field, 0) >= MIN_BASELINE_SAMPLES
+            value = decayed_rates.get(field)
+            base = (baseline.get("decayed_rates") or {}).get(field)
+            segment_coverage = rate_sample_counts[field] >= MIN_BASELINE_SAMPLES
+            baseline_coverage = baseline.get("rate_sample_counts", {}).get(field, 0) >= MIN_BASELINE_SAMPLES
+            if (segment_coverage
+                    and baseline_coverage
                     and value is not None and base is not None and base > 0):
                 relative.append(max(0.0, min(100.0, 50.0 * value / base)))
+                relative_lifts[field] = round(((value / base) - 1) * 100, 2)
+            else:
+                relative_lifts[field] = None
+    else:
+        relative_lifts = {field: None for field in rate_names}
+    observed_score = round(sum(relative) / len(relative), 2) if relative else None
     return {
         "sample_count": count,
         "confidence": _confidence(count),
         "first_observed": min((day for sample in samples for day in sample.get("metric_dates", [])), default=None),
         "last_observed": max((day for sample in samples for day in sample.get("metric_dates", [])), default=None),
+        "observation_window": {
+            "start": min((day for sample in samples for day in sample.get("metric_dates", [])), default=None),
+            "end": max((day for sample in samples for day in sample.get("metric_dates", [])), default=None),
+        },
         "metrics": sums,
-        "observed_performance_score": round(sum(relative) / len(relative), 2) if relative else None,
+        "decayed_metrics": decayed_metrics,
+        "decayed_rates": decayed_rates,
+        "observed_performance_score": observed_score,
+        "relative_lift": relative_lifts,
         "score_type": "computed_relative_index" if relative else "unavailable_without_comparable_baseline",
         "baseline_sample_count": baseline.get("sample_count", 0) if baseline else 0,
         "baseline_rates": {field: baseline.get(field) for field in rate_names} if baseline else None,
@@ -208,13 +297,22 @@ def _aggregate(samples: list[dict[str, Any]], baseline: dict[str, Any] | None) -
             for field in (*_COUNT_METRICS, *_RATE_METRICS)
         },
         "rate_sample_counts": rate_sample_counts,
+        "source_snapshot_ids": sorted({snapshot_id for sample in samples for snapshot_id in sample.get("source_snapshot_ids", [])}),
         "aggregate_metric_semantics": "count totals sum only non-null per-Pin observations; metric_sample_counts reports their coverage",
-        "recommendation_context": _recommendation_context(sums, baseline, count, rate_sample_counts),
+        "recommendation_context": _recommendation_context(decayed_rates, baseline, count, rate_sample_counts),
+        "signal_status": (
+            "insufficient_data" if count < MIN_BASELINE_SAMPLES or not relative
+            else "uncertain" if _confidence(count) != "adequate_sample"
+            else "positive" if observed_score >= POSITIVE_RELATIVE_SCORE
+            else "negative" if observed_score <= NEGATIVE_RELATIVE_SCORE
+            else "uncertain"
+        ),
         "rate_method": {
             "save_rate": "sum(saves) / sum(impressions) over pins where both values are observed; denominator > 0",
             "pin_click_rate": "sum(pin_clicks) / sum(impressions) over pins where both values are observed; denominator > 0",
             "outbound_click_rate": "sum(outbound_clicks) / sum(impressions) over pins where both values are observed; denominator > 0",
             "engagement_rate": "arithmetic mean of provider-stored non-null snapshot rates",
+            "decay": f"daily observations weighted by 2^(-age_days/{OBSERVATION_HALF_LIFE_DAYS}) at window_end; raw metrics retained separately",
         },
     }
 
@@ -226,11 +324,12 @@ def _recommendation_context(
     if count < MIN_BASELINE_SAMPLES or not baseline or baseline["sample_count"] < MIN_BASELINE_SAMPLES:
         return []
     context = []
-    for field in ("save_rate", "pin_click_rate", "outbound_click_rate"):
+    for field in ("save_rate", "pin_click_rate", "outbound_click_rate", "engagement_rate"):
         if (rate_sample_counts.get(field, 0) < MIN_BASELINE_SAMPLES
                 or baseline.get("rate_sample_counts", {}).get(field, 0) < MIN_BASELINE_SAMPLES):
             continue
-        value, base = metrics.get(field), baseline.get(field)
+        value = metrics.get(field)
+        base = (baseline.get("decayed_rates") or {}).get(field)
         if value is None or base is None or base <= 0:
             continue
         if value > base:
@@ -241,7 +340,7 @@ def _recommendation_context(
 
 
 def _segments_for(sample: dict[str, Any]) -> dict[str, set[str]]:
-    output = {key: set() for key in ("keyword", "semantic_group", "intent", "audience", "use_case", "creative_angle", "quality_profile", "board", "season", "holiday", "experiment", "variant")}
+    output = {key: set() for key in ("keyword", "semantic_group", "intent", "audience", "use_case", "creative_type", "creative_angle", "quality_profile", "board", "season", "holiday", "experiment", "variant")}
     variant = sample.get("variant")
     intel = sample.get("intelligence")
     keyword_items = (
@@ -270,6 +369,9 @@ def _segments_for(sample: dict[str, Any]) -> dict[str, set[str]]:
         else {}
     )
     seo = snapshot.get("seo_metadata") if isinstance(snapshot.get("seo_metadata"), dict) else {}
+    creative_type = snapshot.get("creative_type")
+    if isinstance(creative_type, str) and creative_type:
+        output["creative_type"].add(creative_type)
     for intent in seo.get("search_intents", []) if isinstance(seo.get("search_intents"), list) else []:
         if isinstance(intent, str) and intent:
             output["intent"].add(intent)
@@ -450,7 +552,7 @@ class PerformanceLearningService:
             intel = intelligence.get(generation.id) if generation else None
             if generation is None or intel is None:
                 missing_provenance += 1
-            metrics = _pin_metrics(observations)
+            metrics = _pin_metrics(observations, reference_date=window_end)
             if all(metrics.get(field) is None for field in (*_COUNT_METRICS, *_RATE_METRICS)):
                 continue
             pub_time = _as_naive_utc(publication.published_at)
@@ -468,6 +570,7 @@ class PerformanceLearningService:
                 "source_snapshot_ids": sorted(row.id for row in observations),
                 "metric_dates": sorted(row.metric_date.isoformat() for row in observations if row.metric_date),
                 "metrics": metrics,
+                "observation_weights": metrics["observation_weights"],
                 "publication": publication,
                 "generation": generation,
                 "intelligence": intel,
@@ -480,12 +583,9 @@ class PerformanceLearningService:
             samples.append(sample)
 
         baseline = _aggregate(samples, None)
-        baseline_rates = baseline["metrics"]
         baseline_record = {
             "sample_count": baseline["sample_count"],
-            "save_rate": baseline_rates.get("save_rate"),
-            "pin_click_rate": baseline_rates.get("pin_click_rate"),
-            "outbound_click_rate": baseline_rates.get("outbound_click_rate"),
+            "decayed_rates": baseline["decayed_rates"],
             "rate_sample_counts": baseline.get("rate_sample_counts", {}),
         }
         board_ids = sorted({sample["publication"].board_id for sample in samples if sample["publication"].board_id})
@@ -493,7 +593,7 @@ class PerformanceLearningService:
             select(PinterestBoard).where(PinterestBoard.id.in_(board_ids or [-1]))
         ).all()}
         dimensions: dict[str, list[dict[str, Any]]] = {}
-        for dimension in ("keyword", "semantic_group", "intent", "audience", "use_case", "creative_angle", "quality_profile", "board", "season", "holiday", "experiment", "variant"):
+        for dimension in ("keyword", "semantic_group", "intent", "audience", "use_case", "creative_type", "creative_angle", "quality_profile", "board", "season", "holiday", "experiment", "variant"):
             grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for sample in samples:
                 for value in sorted(sample["segments"][dimension]):
@@ -503,6 +603,7 @@ class PerformanceLearningService:
                 aggregate = _aggregate(members, baseline_record)
                 aggregate["dimension"] = dimension
                 aggregate["value"] = value
+                aggregate["last_updated"] = now.isoformat()
                 if dimension == "board":
                     recommendation_scores = [
                         item["board_recommendation"].match_score for item in members
@@ -550,12 +651,13 @@ class PerformanceLearningService:
                     if sample["seasonal"] else "not_available"
                 ),
                 "metrics": sample["metrics"],
+                "observation_weights": sample["observation_weights"],
                 "provenance_status": "known" if sample["generation"] and sample["intelligence"] else "missing_provenance",
             } for sample in samples],
             "missing_provenance_sample_count": missing_provenance,
             "unlinked_snapshot_count": unlinked_snapshots,
             "unlinked_snapshot_ids": unlinked_snapshot_ids,
-            "score_definition": "mean of available save/pin-click/outbound-click rate ratios versus account baseline, baseline rate > 0; ratio is 50 * segment_rate / baseline_rate clamped to 0..100",
+            "score_definition": "mean of available save/pin-click/outbound-click/engagement rate ratios versus account baseline, baseline rate > 0; ratio is 50 * segment_rate / baseline_rate clamped to 0..100",
             "score_label": "internal_computed_relative_index_not_pinterest_ranking",
             "recommendation_semantics": {"observed": "stored analytics facts", "inferred": "descriptive comparison to this account/window baseline; no action is applied"},
             "external_calls": False,
@@ -587,3 +689,78 @@ def recalculate_performance_learning(db: Session, **kwargs: Any) -> SEOPerforman
 def run_performance_learning(db: Session, **kwargs: Any) -> SEOPerformanceLearning:
     """Explicit, idempotent batch entry point; no scheduler or provider is invoked."""
     return recalculate_performance_learning(db, **kwargs)
+
+
+def get_performance_learning_dashboard(db: Session, *, account_id: int | None = None) -> dict[str, Any]:
+    """Return one account-scoped, persisted learning result for read-only display."""
+    if account_id is None:
+        active_accounts = list(db.scalars(
+            select(PinterestAccount).where(PinterestAccount.is_active.is_(True)).order_by(PinterestAccount.id)
+        ))
+        if len(active_accounts) != 1:
+            return {
+                "status": "account_selection_required" if len(active_accounts) > 1 else "insufficient_data",
+                "strategies": [], "sample_count": 0, "last_updated": None,
+                "observation_window": None,
+            }
+        account = active_accounts[0]
+        account_id = account.id
+        account_identifier = account.account_identifier
+    else:
+        account = db.get(PinterestAccount, account_id)
+        account_identifier = account.account_identifier if account else None
+        if account is None:
+            return {"status": "insufficient_data", "strategies": [], "sample_count": 0,
+                    "last_updated": None, "observation_window": None}
+    scope = [SEOPerformanceLearning.account_id == account_id]
+    if account_identifier:
+        scope.append(SEOPerformanceLearning.account_identifier_snapshot == account_identifier)
+    row = db.scalar(
+        select(SEOPerformanceLearning).where(or_(*scope))
+        .order_by(SEOPerformanceLearning.calculated_at.desc(), SEOPerformanceLearning.id.desc()).limit(1)
+    )
+    if row is None:
+        return {"status": "insufficient_data", "strategies": [], "sample_count": 0,
+                "last_updated": None, "observation_window": None}
+    dimensions = (row.result_snapshot or {}).get("dimensions", {})
+    strategies = []
+    strategy_dimensions = (
+        "creative_type", "creative_angle", "keyword", "semantic_group", "board",
+        "season", "holiday", "experiment", "variant",
+    )
+    for dimension in strategy_dimensions:
+        values = dimensions.get(dimension, []) if isinstance(dimensions, dict) else []
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            strategies.append({
+                "dimension": dimension,
+                "value": item.get("board_name") or item.get("value"),
+                "signal_status": item.get("signal_status", "insufficient_data"),
+                "confidence": item.get("confidence", "insufficient_data"),
+                "sample_count": item.get("sample_count", 0),
+                "metrics": item.get("metrics", {}),
+                "decayed_rates": item.get("decayed_rates", {}),
+                "baseline_rates": item.get("baseline_rates"),
+                "observed_performance_score": item.get("observed_performance_score"),
+                "relative_lift": item.get("relative_lift", {}),
+                "first_observed": item.get("first_observed"),
+                "last_observed": item.get("last_observed"),
+                "last_updated": item.get("last_updated"),
+                "source_snapshot_ids": item.get("source_snapshot_ids", []),
+            })
+    strategies.sort(key=lambda item: (
+        0 if item["signal_status"] == "positive" else 1 if item["signal_status"] == "negative" else 2,
+        -item["sample_count"], item["dimension"], str(item["value"] or "").casefold(),
+    ))
+    has_sufficient_signal = any(
+        item["signal_status"] in {"positive", "negative", "uncertain"} for item in strategies
+    )
+    return {
+        "status": "available" if has_sufficient_signal else "insufficient_data",
+        "strategies": strategies[:20],
+        "sample_count": row.sample_count,
+        "last_updated": row.calculated_at.isoformat(),
+        "observation_window": {"start": row.window_start.isoformat(), "end": row.window_end.isoformat()},
+        "algorithm_version": row.algorithm_version,
+    }

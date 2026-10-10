@@ -25,6 +25,113 @@
           Üretilenler <span class="generated-count">{{ creatives | length }}</span>
         </button>
       </div>
+      <section class="etsy-connection next-best-pins" aria-labelledby="next-best-pins-title">
+        <h2 id="next-best-pins-title">Sıradaki En İyi Pin Fırsatları</h2>
+        <p class="subtitle">Yalnızca kayıtlı SEO, pano, mevsim ve içerik geçmişinden hesaplanan yerel öneriler. Pinterest sıralama puanı değildir.</p>
+        {% if next_best_pins %}
+          <div class="opportunity-grid">
+            {% for opportunity in next_best_pins %}
+              <article class="opportunity-card">
+                <div class="opportunity-heading"><h3>{{ opportunity.product_title }}</h3><span class="opportunity-score">{{ opportunity.score }} / 100</span></div>
+                <dl>
+                  <div><dt>Önerilen kreatif türü</dt><dd>{{ opportunity.creative_type_label }}</dd></div>
+                  <div><dt>Birincil anahtar kelime</dt><dd>{{ opportunity.primary_keyword }}</dd></div>
+                  <div><dt>Kreatif açısı</dt><dd>{{ opportunity.creative_angle_label }}</dd></div>
+                  <div><dt>Önerilen pano</dt><dd>{{ opportunity.board_name or 'Pano eşleşmesi yok' }}</dd></div>
+                  <div><dt>Mevsim bağlamı</dt><dd>{% if opportunity.season %}{{ opportunity.season }}{% if opportunity.season_reference_date %} · {{ opportunity.season_reference_date }}{% endif %}{% else %}Mevsim sinyali yok{% endif %}</dd></div>
+                </dl>
+                <p>{{ opportunity.why }}</p>
+                <details><summary>Skor gerekçesi</summary>
+                  <ul>{% for signal in opportunity.positive_signals %}<li>{{ signal }}</li>{% endfor %}</ul>
+                  {% if opportunity.negative_signals %}<ul>{% for signal in opportunity.negative_signals %}<li>{{ signal }}</li>{% endfor %}</ul>{% endif %}
+                </details>
+                {% if opportunity.performance_status == 'unknown' %}<small>Performans verisi: henüz mevcut değil</small>
+                {% elif opportunity.performance_status == 'positive' or opportunity.performance_status == 'negative' or opportunity.performance_status == 'uncertain' %}<small>Hesaba özel öğrenme: {{ 'olumlu' if opportunity.performance_status == 'positive' else 'olumsuz' if opportunity.performance_status == 'negative' else 'belirsiz' }} · {{ opportunity.performance_learning.sample_count }} yayın</small>
+                {% else %}<small>Öğrenme sinyali için yeterli veri yok.</small>{% endif %}
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="unavailable">Henüz fırsat önerisi oluşturmak için yeterli kayıtlı SEO verisi yok.</p>
+        {% endif %}
+      </section>
+      <section class="etsy-connection portfolio-dashboard" aria-labelledby="content-portfolio-title">
+        <h2 id="content-portfolio-title">Bugünün İçerik Portföyü</h2>
+        <p class="subtitle">Mevcut kreatiflerden Opportunity Engine puanı, hesaba özel güvenilir öğrenme ve çeşitlilik dengesiyle seçilen günlük adaylar. Bu bölüm yerel planlamadır; Pinterest'te yayın yapmaz.</p>
+        {% if today_portfolio %}
+          <div class="portfolio-summary" aria-label="Portföy özeti">
+            <span>{{ today_portfolio_summary.get('selected_count', today_portfolio|length) }} seçildi / {{ today_portfolio_summary.get('total_candidates', today_portfolio|length) }} aday</span>
+            <span>{{ today_portfolio_summary.get('keyword_diversity', 0) }} farklı anahtar kelime</span>
+            <span>{{ today_portfolio_summary.get('exploration_count', 0) }} keşif</span>
+            <span>{{ today_portfolio_summary.get('learned_count', 0) }} öğrenme sinyali</span>
+            <span>{{ today_portfolio_summary.get('learned_positive_count', 0) }} olumlu öğrenme</span>
+            <span>{{ today_portfolio_summary.get('seasonal_count', 0) }} mevsimsel</span>
+          </div>
+          {% if portfolio_warnings %}<p class="notice portfolio-warning">Portföy yoğunluğu: {{ portfolio_warnings|join(' · ') }}</p>{% endif %}
+          <div class="portfolio-distributions">
+            {% for label, distribution in [('Kreatif türü', today_portfolio_summary.get('creative_type_distribution', {})), ('Kreatif açısı', today_portfolio_summary.get('creative_angle_distribution', {})), ('Pano', today_portfolio_summary.get('board_distribution', {}))] %}
+              {% if distribution %}<p><strong>{{ label }}:</strong> {% for value, count in distribution.items() %}{{ value }} {{ count }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+            {% endfor %}
+          </div>
+          <div class="portfolio-grid">
+            {% for pin in today_portfolio %}
+              {% set portfolio = pin.portfolio_snapshot %}
+              {% set board = portfolio.get('board') %}
+              <article class="portfolio-card">
+                <div class="opportunity-heading"><h3>{{ pin.title }}</h3><span class="opportunity-score">{{ portfolio.get('final_score', 0) }} / 100</span></div>
+                <p class="portfolio-scores">Fırsat: {{ portfolio.get('opportunity_score') if portfolio.get('opportunity_score') is not none else 'Bilinmiyor' }} · {{ pin.scheduled_for.strftime('%H:%M') if pin.scheduled_for else 'Saat belirlenmedi' }}</p>
+                <dl>
+                  <div><dt>Kreatif türü</dt><dd>{{ portfolio.get('creative_type') or 'Belirtilmedi' }}</dd></div>
+                  <div><dt>Kreatif açısı</dt><dd>{{ portfolio.get('creative_angle') or 'Belirtilmedi' }}</dd></div>
+                  <div><dt>Birincil anahtar kelime</dt><dd>{{ portfolio.get('primary_keyword') or 'Belirtilmedi' }}</dd></div>
+                  <div><dt>Önerilen pano</dt><dd>{{ board.get('name') if board is mapping else 'Pano eşleşmesi yok' }}</dd></div>
+                </dl>
+                <p>{{ portfolio.get('selection_reason') or 'Mevcut fırsat ve çeşitlilik sinyalleriyle seçildi.' }}</p>
+                <div class="portfolio-tags">
+                  {% if portfolio.get('exploration') %}<span>Keşif</span>{% endif %}
+                  {% if portfolio.get('learned') %}<span>Öğrenme sinyali</span>{% endif %}
+                  {% if portfolio.get('seasonal') %}<span>Mevsimsel</span>{% endif %}
+                </div>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="unavailable">Bugün için portföy seçimi bulunmuyor. Yeterli uygun kreatif olduğunda mevcut günlük scheduler adayları seçer.</p>
+        {% endif %}
+      </section>
+      <section class="etsy-connection learning-dashboard" aria-labelledby="performance-learning-title">
+        <h2 id="performance-learning-title">Performance Learning</h2>
+        <p class="subtitle">Yalnızca seçili Pinterest hesabına bağlanmış gerçek yayın ve analiz kayıtlarından hesaplanan gözlemsel sinyaller. Bu veriler AI prompt'larına veya model eğitimine gönderilmez; otomatik kazanan seçilmez.</p>
+        {% if performance_learning.status == 'account_selection_required' %}
+          <p class="unavailable">Öğrenme verisini hesaplar arasında karıştırmamak için analiz filtresinden tek bir Pinterest hesabı seçin.</p>
+        {% elif performance_learning.status == 'insufficient_data' %}
+          <p class="unavailable">Öğrenme için yeterli veri yok.</p>
+        {% else %}
+          <p class="subtitle">Gözlem penceresi: {{ performance_learning.observation_window.start }} – {{ performance_learning.observation_window.end }} · Son hesaplama: {{ performance_learning.last_updated }}</p>
+          <div class="learning-grid">
+            {% for strategy in performance_learning.strategies %}
+              <article class="learning-card">
+                <div class="opportunity-heading">
+                  <h3>{% if strategy.dimension == 'creative_type' %}Kreatif türü{% elif strategy.dimension == 'creative_angle' %}Kreatif açısı{% elif strategy.dimension == 'semantic_group' %}Anahtar kelime grubu{% elif strategy.dimension == 'board' %}Pano{% elif strategy.dimension == 'season' %}Mevsim{% elif strategy.dimension == 'holiday' %}Özel gün{% elif strategy.dimension == 'experiment' %}Deney{% elif strategy.dimension == 'variant' %}Varyant{% else %}Anahtar kelime{% endif %}: {{ strategy.value }}</h3>
+                  <span class="learning-status learning-{{ strategy.signal_status }}">{% if strategy.signal_status == 'positive' %}Olumlu{% elif strategy.signal_status == 'negative' %}Olumsuz{% elif strategy.signal_status == 'uncertain' %}Belirsiz{% else %}Yetersiz veri{% endif %}</span>
+                </div>
+                <p>{{ strategy.sample_count }} yayın · Güven: {{ strategy.confidence }} · Son gözlem: {{ strategy.last_observed or '—' }} · Son güncelleme: {{ strategy.last_updated or performance_learning.last_updated }}</p>
+                {% set observed = strategy.decayed_rates or {} %}
+                {% set baseline = strategy.baseline_rates or {} %}
+                <dl>
+                  {% for key, label in [('save_rate', 'Kaydetme oranı'), ('outbound_click_rate', 'Dış bağlantı tıklama oranı')] %}
+                    <div><dt>{{ label }}</dt><dd>
+                      {% if observed.get(key) is not none %}{{ '%.2f'|format(observed.get(key) * 100) }}%{% else %}Ölçülmedi{% endif %}
+                      · Hesap tabanı:
+                      {% if baseline.get(key) is not none %}{{ '%.2f'|format(baseline.get(key) * 100) }}%{% else %}Ölçülmedi{% endif %}
+                    </dd></div>
+                  {% endfor %}
+                </dl>
+              </article>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </section>
       <section class="etsy-connection analytics-dashboard" aria-label="Pinterest Analizleri">
         <h2>Pinterest Analizleri</h2>
         <p class="subtitle">Yalnızca toplanan analiz anlık görüntüleri gösterilir. Pin ve hesap metrikleri ayrı tutulur.</p>
@@ -212,6 +319,16 @@
                   {% if creative.image_path %}<img class="creative-detail-image" src="{{ creative.image_path }}" alt="{{ creative.title }}" loading="lazy">{% endif %}
                   <p>{{ creative.description }}</p>
                   {% if creative.seo_metadata %}<p><small><strong>Birincil anahtar kelime:</strong> {{ creative.seo_metadata.primary_keyword }} · <strong>Yaratıcı yaklaşım:</strong> {{ creative.seo_metadata.creative_angle }}</small></p>{% endif %}
+                  {% set candidate_summary = seo_candidate_summaries.get(creative.id) %}
+                  {% if candidate_summary %}
+                    <section class="seo-candidate-summary" aria-label="SEO aday seçimi">
+                      <strong>{{ candidate_summary.candidate_count }} SEO adayı değerlendirildi</strong>
+                      {% if candidate_summary.selected_reason %}<p>{{ candidate_summary.selected_reason }}</p>{% endif %}
+                      <ul>{% for candidate in candidate_summary.candidates %}
+                        <li>{% if candidate.selected %}<strong>Seçilen</strong> · {% endif %}{{ candidate.snapshot.title if candidate.snapshot else 'Geçersiz aday' }}{% if candidate.evaluation and candidate.evaluation.final_score is not none %} · {{ candidate.evaluation.final_score }}/100{% endif %}</li>
+                      {% endfor %}</ul>
+                    </section>
+                  {% endif %}
                   <p><small>{{ creative.keywords | join(', ') }}</small></p><p><em>{{ creative.call_to_action }}</em></p>
                   <form method="post" action="/creatives/{{ creative.id }}/approve"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button type="submit" {% if not authenticated %}disabled{% endif %}>Onayla</button></form><button class="secondary edit-creative" type="button" {% if not authenticated %}disabled{% endif %}>Düzenle</button><form method="post" action="/creatives/{{ creative.id }}/delete"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="secondary" type="submit" {% if not authenticated %}disabled{% endif %}>Sil</button></form>
                   <form class="creative-edit-form" hidden><input type="hidden" name="_csrf" value="{{ csrf_token }}"><label>Başlık <input name="title" value="{{ creative.title }}" {% if not authenticated %}disabled{% endif %}></label><label>Açıklama <textarea name="description" {% if not authenticated %}disabled{% endif %}>{{ creative.description }}</textarea></label><label>Anahtar kelimeler <input name="keywords" value="{{ creative.keywords | join(', ') }}" {% if not authenticated %}disabled{% endif %}></label><label>Harekete geçirici mesaj <input name="call_to_action" value="{{ creative.call_to_action }}" {% if not authenticated %}disabled{% endif %}></label><button type="submit" {% if not authenticated %}disabled{% endif %}>Kaydet</button></form>

@@ -93,6 +93,8 @@ class Pin(Base):
     description: Mapped[str | None] = mapped_column(Text)
     image_path: Mapped[str | None] = mapped_column(String(2048))
     destination_url: Mapped[str | None] = mapped_column(String(2048))
+    # Optional immutable selection rationale for locally scheduled portfolio Pins.
+    portfolio_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default=PinStatus.DRAFT.value, nullable=False)
     scheduled_for: Mapped[datetime | None] = mapped_column(DateTime)
     published_at: Mapped[datetime | None] = mapped_column(DateTime)

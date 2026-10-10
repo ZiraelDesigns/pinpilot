@@ -134,3 +134,13 @@ async def require_admin_csrf(request: Request) -> AuthPrincipal:
     if not submitted or not _constant_time_equal(principal.csrf_token, submitted):
         raise HTTPException(status_code=403, detail="CSRF doğrulaması başarısız.")
     return principal
+
+
+def require_admin_read(request: Request) -> AuthPrincipal:
+    """Authorize private read routes without requiring a CSRF token."""
+    principal = get_principal(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Giriş gerekli.")
+    if principal.role != "admin":
+        raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
+    return principal

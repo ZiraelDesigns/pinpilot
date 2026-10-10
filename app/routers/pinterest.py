@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import PinterestAccount, PinterestBoard
 from app.services.pinterest import PinterestApiService, PinterestIntegrationError, PinterestOAuthService, PinterestTokenService
-from app.security import require_admin_csrf
+from app.security import require_admin_csrf, require_admin_read
 
 router = APIRouter(prefix="/pinterest", tags=["pinterest"])
 
@@ -73,7 +73,7 @@ def sync_boards(db: Session = Depends(get_db)):
         return _dashboard_redirect(str(exc), error=True)
 
 
-@router.get("/boards")
+@router.get("/boards", dependencies=[Depends(require_admin_read)])
 def list_boards(db: Session = Depends(get_db)) -> JSONResponse:
     account = db.query(PinterestAccount).filter_by(is_active=True).first()
     if not account:

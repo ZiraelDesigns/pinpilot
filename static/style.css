@@ -68,6 +68,9 @@ a:hover { color: #ffb2c1; }
 .creative-summary strong { margin: 0 0 .45rem; font-size: 1rem; overflow-wrap: anywhere; }
 .creative-summary span { margin-top: .25rem; font-size: .85rem; overflow-wrap: anywhere; }
 .creative-detail { padding-top: .75rem; border-top: 1px solid var(--border); }
+.seo-candidate-summary { margin: .75rem 0; padding: .75rem; border: 1px solid var(--border); border-radius: .75rem; background: var(--panel); }
+.seo-candidate-summary ul { margin: .45rem 0 0; padding-left: 1.25rem; color: var(--muted); }
+.seo-candidate-summary li { margin: .25rem 0; overflow-wrap: anywhere; }
 .generated-empty { padding: 2rem 1rem; text-align: center; }
 .page-scroll-toggle { position: fixed; z-index: 20; right: max(1.25rem, env(safe-area-inset-right)); bottom: max(1.25rem, env(safe-area-inset-bottom)); display: grid; width: 3rem; height: 3rem; place-items: center; padding: 0; color: var(--text); background: #35353b; border: 1px solid #55555f; border-radius: 50%; box-shadow: 0 5px 20px #0008; font-size: 1.45rem; line-height: 1; }
 .page-scroll-toggle:hover { background: #45454d; border-color: #696974; }
@@ -85,6 +88,44 @@ textarea { min-height: 4rem; min-width: 20rem; }
 .creative-edit-form { display: block; margin-top: .75rem; }
 
 .analytics-dashboard { max-width: 100%; overflow: hidden; }
+.opportunity-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 1rem; }
+.opportunity-card { min-width: 0; padding: 1rem; border: 1px solid var(--border); border-radius: 1rem; background: var(--panel-raised); }
+.opportunity-card h3 { margin: 0; font-size: 1rem; }
+.opportunity-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; }
+.opportunity-score { flex: 0 0 auto; color: #d6d3ff; font-weight: 700; }
+.opportunity-card dl { display: grid; gap: .6rem; margin: 1rem 0; }
+.opportunity-card dl div { display: grid; grid-template-columns: minmax(7rem, .8fr) 1.2fr; gap: .5rem; }
+.opportunity-card dt, .opportunity-card small { color: var(--muted); }
+.opportunity-card dd { margin: 0; overflow-wrap: anywhere; }
+.opportunity-card p { margin-bottom: .5rem; }
+.opportunity-card details { margin-top: .75rem; color: var(--muted); }
+.opportunity-card summary { cursor: pointer; color: var(--text); }
+.opportunity-card ul { margin: .5rem 0; padding-left: 1.25rem; }
+.learning-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 1rem; }
+.learning-card { min-width: 0; padding: 1rem; border: 1px solid var(--border); border-radius: 1rem; background: var(--panel-raised); }
+.learning-card h3 { margin: 0; font-size: 1rem; }
+.learning-card p { color: var(--muted); }
+.learning-card dl { display: grid; gap: .5rem; margin-bottom: 0; }
+.learning-card dl div { display: flex; justify-content: space-between; gap: .75rem; }
+.learning-card dd { margin: 0; text-align: right; }
+.learning-status { flex: 0 0 auto; padding: .2rem .55rem; border-radius: 999px; background: #34343b; font-size: .8rem; }
+.learning-positive { color: #a8dfbd; }
+.learning-negative { color: #f0a9b1; }
+.learning-uncertain, .learning-insufficient_data { color: #d0c79a; }
+.portfolio-summary { display: flex; flex-wrap: wrap; gap: .55rem; margin: 1rem 0; }
+.portfolio-summary span, .portfolio-tags span { padding: .3rem .65rem; color: #d6d3ff; background: #303039; border: 1px solid var(--border); border-radius: 999px; font-size: .82rem; }
+.portfolio-warning { margin: .75rem 0; }
+.portfolio-distributions { display: flex; flex-wrap: wrap; gap: .4rem 1.25rem; color: var(--muted); font-size: .85rem; }
+.portfolio-distributions p { margin: .2rem 0; }
+.portfolio-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 1rem; margin-top: 1rem; }
+.portfolio-card { min-width: 0; padding: 1rem; background: var(--panel-raised); border: 1px solid var(--border); border-radius: 1rem; }
+.portfolio-card h3 { margin: 0; font-size: 1rem; }
+.portfolio-scores { color: var(--muted); font-size: .85rem; }
+.portfolio-card dl { display: grid; gap: .5rem; }
+.portfolio-card dl div { display: grid; grid-template-columns: minmax(7rem, .8fr) 1.2fr; gap: .5rem; }
+.portfolio-card dt { color: var(--muted); }
+.portfolio-card dd { margin: 0; overflow-wrap: anywhere; }
+.portfolio-tags { display: flex; flex-wrap: wrap; gap: .4rem; }
 .analytics-dashboard h3 { margin: 1.75rem 0 .75rem; }
 .analytics-dashboard h4 { margin: 0 0 .75rem; }
 .analytics-filters { display: flex; flex-wrap: wrap; align-items: end; gap: .4rem; }

@@ -28,7 +28,7 @@ END = date(2026, 9, 30)
 
 
 def _sample(db, account, *, index=0, with_provenance=True, impressions=100, saves=10, outbound=5,
-            day=date(2026, 9, 10), board=None):
+            engagements=None, engagement_rate=None, day=date(2026, 9, 10), board=None):
     generation = None
     if with_provenance:
         generation = SEOGeneration(
@@ -76,7 +76,7 @@ def _sample(db, account, *, index=0, with_provenance=True, impressions=100, save
         pin_id=local_pin.id, published_pin_id=publication.id, metric_date=day, period_start=datetime.combine(day, datetime.min.time()),
         period_end=datetime.combine(day + timedelta(days=1), datetime.min.time()), fetched_at=datetime(2026, 9, 20),
         impressions=impressions, saves=saves, outbound_clicks=outbound, pin_clicks=3,
-        engagements=None, engagement_rate=None, pin_click_rate=None, outbound_click_rate=None,
+        engagements=engagements, engagement_rate=engagement_rate, pin_click_rate=None, outbound_click_rate=None,
         metric_schema_version="pinterest_v5_organic_daily",
     ))
     if generation and board:
@@ -281,10 +281,36 @@ def test_ten_distinct_pins_are_marked_adequate_and_score_is_baseline_relative():
         db.add(account)
         db.flush()
         for index in range(10):
-            _sample(db, account, index=index, impressions=100, saves=10 + index)
+            _sample(db, account, index=index, impressions=100, saves=10 + index,
+                    engagements=20, engagement_rate=0.2)
         db.flush()
         result = _run(db, account)
         assert result.result_snapshot["baseline"]["confidence"] == "adequate_sample"
         keyword = next(row for row in result.result_snapshot["dimensions"]["keyword"] if row["value"] == "gym shirt")
         assert keyword["confidence"] == "adequate_sample"
         assert keyword["observed_performance_score"] == 50
+        assert keyword["rate_sample_counts"]["engagement_rate"] == 10
+        assert keyword["relative_lift"]["engagement_rate"] == 0
+        assert keyword["metrics"]["engagements"] == 200
+
+
+def test_recent_observations_receive_more_weight_and_strategy_keeps_snapshot_provenance():
+    with SessionLocal() as db:
+        account = PinterestAccount(account_name="Test", account_identifier="test-account")
+        db.add(account)
+        db.flush()
+        _sample(db, account, index=1, impressions=100, saves=10, day=date(2026, 9, 1))
+        _sample(db, account, index=3, impressions=100, saves=10, day=date(2026, 9, 15))
+        _sample(db, account, index=2, impressions=100, saves=10, day=date(2026, 9, 30))
+        db.flush()
+        result = _run(db, account)
+        observations = result.result_snapshot["observations"]
+        old = next(item for item in observations if item["metric_dates"] == ["2026-09-01"])
+        recent = next(item for item in observations if item["metric_dates"] == ["2026-09-30"])
+        assert old["observation_weights"]["min"] < recent["observation_weights"]["min"]
+        assert old["metrics"]["saves"] == recent["metrics"]["saves"] == 10
+        keyword = next(item for item in result.result_snapshot["dimensions"]["keyword"]
+                       if item["value"] == "gym shirt")
+        assert keyword["source_snapshot_ids"]
+        assert keyword["observation_window"] == {"start": "2026-09-01", "end": "2026-09-30"}
+        assert keyword["signal_status"] == "uncertain"

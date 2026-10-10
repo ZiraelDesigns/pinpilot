@@ -7,11 +7,19 @@ from app.config import settings
 from app.database import SessionLocal
 from app.main import app
 from app.models import EtsyAccount, Product
-from app.security import SESSION_COOKIE, SESSION_SALT, require_admin_csrf
+from app.security import (
+    SESSION_COOKIE,
+    SESSION_SALT,
+    get_principal,
+    require_admin_csrf,
+    require_admin_read,
+)
 
 
 def _strict_auth(monkeypatch):
     app.dependency_overrides.pop(require_admin_csrf, None)
+    app.dependency_overrides.pop(require_admin_read, None)
+    app.dependency_overrides.pop(get_principal, None)
     monkeypatch.setattr(settings, "app_auth_username", "owner")
     monkeypatch.setattr(settings, "app_auth_password", "a-long-test-password-123")
     monkeypatch.setattr(settings, "app_session_secret_key", "s" * 48)
@@ -31,7 +39,7 @@ def _login(client, *, password="a-long-test-password-123"):
     return response
 
 
-def test_unauthenticated_mutations_are_rejected_but_read_only_gets_remain_open(monkeypatch):
+def test_anonymous_private_reads_are_blocked_while_public_pages_remain_open(monkeypatch):
     _strict_auth(monkeypatch)
     with TestClient(app, base_url="https://testserver") as client:
         requests = [
@@ -57,11 +65,26 @@ def test_unauthenticated_mutations_are_rejected_but_read_only_gets_remain_open(m
             }),
         ]
         assert [response.status_code for response in requests] == [401] * len(requests)
-        assert client.get("/").status_code == 200
+
+        dashboard = client.get("/", follow_redirects=False)
+        assert dashboard.status_code == 303
+        assert dashboard.headers["location"] == "/auth/login"
+        assert "Dashboard action test product" not in dashboard.text
+        assert client.get("/auth/login").status_code == 200
+        assert client.get("/privacy-policy.html").status_code == 200
         assert client.get("/health").status_code == 200
-        assert client.get("/pipeline/status").status_code == 200
-        assert client.get("/pinterest/boards").status_code == 200
-        assert client.get("/experiments").status_code == 200
+        assert client.get("/static/style.css").status_code == 200
+
+        private_reads = [
+            client.get("/pipeline/status"),
+            client.get("/pinterest/boards"),
+            client.get("/experiments"),
+            client.get("/experiments/1"),
+            client.get("/experiments/seo-ab"),
+            client.get("/experiments/seo-ab/1"),
+        ]
+        assert [response.status_code for response in private_reads] == [401] * len(private_reads)
+        assert all("Dashboard action test product" not in response.text for response in private_reads)
 
 
 def test_dashboard_operation_buttons_reflect_admin_session_without_misleading_busy_cursor(monkeypatch):
@@ -72,22 +95,11 @@ def test_dashboard_operation_buttons_reflect_admin_session_without_misleading_bu
         db.commit()
 
     with TestClient(app, base_url="https://testserver") as client:
-        anonymous_dashboard = client.get("/").text
-        for marker in (
-            'id="ai-pipeline-toggle"',
-            '<form id="creative-generate-form">',
-            'action="/pinterest/connect"',
-            'action="/etsy/sync"',
-            'action="/etsy/disconnect"',
-        ):
-            assert marker in anonymous_dashboard
-        assert "yönetici girişi" in anonymous_dashboard
-        anonymous_pipeline_button = re.search(r'<button id="ai-pipeline-toggle"[^>]*>', anonymous_dashboard).group(0)
-        assert re.search(r"\sdisabled(?:\s|>)", anonymous_pipeline_button)
-        assert '<button type="submit" disabled>Kreatif oluştur</button>' in anonymous_dashboard
-        assert '<button type="submit" disabled>Pinterest\'e bağlan</button>' in anonymous_dashboard
-        assert '<button type="submit" disabled>Etsy ilanlarını eşitle</button>' in anonymous_dashboard
-        assert '<button class="secondary" type="submit" disabled>Etsy bağlantısını kaldır</button>' in anonymous_dashboard
+        anonymous_dashboard = client.get("/", follow_redirects=False)
+        assert anonymous_dashboard.status_code == 303
+        assert anonymous_dashboard.headers["location"] == "/auth/login"
+        assert 'id="ai-pipeline-toggle"' not in anonymous_dashboard.text
+        assert '<form id="creative-generate-form">' not in anonymous_dashboard.text
 
         stylesheet = client.get("/static/style.css").text
         assert "button:disabled { opacity: .6; cursor: not-allowed; }" in stylesheet
@@ -95,6 +107,8 @@ def test_dashboard_operation_buttons_reflect_admin_session_without_misleading_bu
 
         assert _login(client).status_code == 303
         admin_dashboard = client.get("/").text
+        assert 'id="ai-pipeline-toggle"' in admin_dashboard
+        assert '<form id="creative-generate-form">' in admin_dashboard
         admin_pipeline_button = re.search(r'<button id="ai-pipeline-toggle"[^>]*>', admin_dashboard).group(0)
         assert not re.search(r"\sdisabled(?:\s|>)", admin_pipeline_button)
         assert re.search(r'<button type="submit"\s*>Kreatif oluştur</button>', admin_dashboard)
@@ -107,6 +121,10 @@ def test_dashboard_operation_buttons_reflect_admin_session_without_misleading_bu
             button = re.search(r"<button\b[^>]*>", form).group(0)
             assert not re.search(r"\sdisabled(?:\s|>)", button)
             assert '<input type="hidden" name="_csrf" value="' in form
+        assert client.get("/pipeline/status").status_code == 200
+        assert client.get("/pinterest/boards").status_code == 200
+        assert client.get("/experiments").status_code == 200
+        assert client.get("/experiments/seo-ab").status_code == 200
 
 
 def test_login_requires_login_csrf_and_sets_hardened_expiring_admin_cookie(monkeypatch):
@@ -168,11 +186,14 @@ def test_authenticated_requests_require_matching_csrf_and_admin_role(monkeypatch
 
         viewer_payload = {"sub": "owner", "role": "viewer", "csrf": "v" * 40}
         viewer_cookie = URLSafeTimedSerializer("s" * 48, salt=SESSION_SALT).dumps(viewer_payload)
-        client.cookies.set(SESSION_COOKIE, viewer_cookie, domain="testserver", path="/")
+        client.cookies.clear()
+        client.cookies.set(SESSION_COOKIE, viewer_cookie, path="/")
         forbidden = client.post(
             "/pipeline/toggle", json={"enabled": True}, headers={"X-CSRF-Token": "v" * 40}
         )
         assert forbidden.status_code == 403
+        assert client.get("/pipeline/status").status_code == 403
+        assert client.get("/experiments").status_code == 403
 
 
 def test_valid_csrf_hidden_form_token_allows_logout(monkeypatch):
@@ -188,6 +209,8 @@ def test_valid_csrf_hidden_form_token_allows_logout(monkeypatch):
 
 def test_missing_auth_configuration_fails_closed_without_secret_generation(monkeypatch):
     app.dependency_overrides.pop(require_admin_csrf, None)
+    app.dependency_overrides.pop(require_admin_read, None)
+    app.dependency_overrides.pop(get_principal, None)
     monkeypatch.setattr(settings, "app_auth_username", None)
     monkeypatch.setattr(settings, "app_auth_password", None)
     monkeypatch.setattr(settings, "app_session_secret_key", None)

@@ -134,8 +134,8 @@ def _classify_gemini_exception(exc: Exception) -> AIProviderRequestError:
     )
 
 
-SEO_PROMPT_VERSION = "pinterest_seo_v2"
-SEO_SCHEMA_VERSION = "pinterest_seo_metadata_v2"
+SEO_PROMPT_VERSION = "pinterest_seo_v2_candidates_v1"
+SEO_SCHEMA_VERSION = "pinterest_seo_candidate_set_v1"
 
 
 @dataclass(frozen=True)
@@ -167,11 +167,11 @@ class MockAIContentProvider:
         variation = payload["variation"]
 
         angles = {
-            "product_focus": "product details",
-            "lifestyle": "everyday style",
-            "problem_solution": "practical use",
-            "gift_idea": "thoughtful gifting",
-            "minimalist": "minimalist style",
+            "product_focus": ("product details", "everyday appeal", "simple style"),
+            "lifestyle": ("everyday style", "relaxed look", "casual styling"),
+            "problem_solution": ("practical use", "simple solution", "everyday function"),
+            "gift_idea": ("thoughtful gifting", "meaningful present", "gift inspiration"),
+            "minimalist": ("clean aesthetic", "simple design", "quiet styling"),
         }
         intents = {
             "product_focus": ["product_search"],
@@ -180,14 +180,20 @@ class MockAIContentProvider:
             "gift_idea": ["gift_intent"],
             "minimalist": ["aesthetic_style_intent"],
         }
-        candidates = product["tags"] or _keywords_from_title(product["title"])
-        base_keyword = next((value for value in candidates if value.casefold() != "product"), candidates[0])
-        angle = angles[creative_type]
-        primary_keyword = f"{base_keyword} {angle} {variation}"
-        product_type = payload.get("product_type_hint") or base_keyword
-
-        return json.dumps(
-            {
+        keyword_sources = product["tags"] or _keywords_from_title(product["title"])
+        keyword_sources = [value for value in keyword_sources if value.casefold() != "product"] or [product["title"]]
+        angle_options = angles[creative_type]
+        product_type = (payload.get("product_type_hint") or keyword_sources[0]).replace("_", " ").replace("-", " ").strip()
+        result = []
+        for candidate_index in range(max(1, int(payload.get("candidate_count", 3)))):
+            base_keyword = keyword_sources[(candidate_index + variation - 1) % len(keyword_sources)]
+            primary_keyword = (
+                f"{base_keyword.replace('_', ' ').replace('-', ' ').strip()} "
+                f"{angle_options[candidate_index % len(angle_options)]} {variation}-{candidate_index + 1}"
+            )
+            angle = angle_options[candidate_index % len(angle_options)]
+            creative_angle = f"{angle} variation {variation} option {candidate_index + 1}"
+            result.append({
                 "title": primary_keyword.title(),
                 "description": (
                     f"Discover {product['title']} for {angle}. "
@@ -196,16 +202,15 @@ class MockAIContentProvider:
                 "call_to_action": "See details",
                 "seo": {
                     "primary_keyword": primary_keyword,
-                    "secondary_keywords": [base_keyword],
-                    "long_tail_keywords": [f"{base_keyword} {product_type} {angle}"],
+                    "secondary_keywords": [angle],
+                    "long_tail_keywords": [f"{primary_keyword} {product_type} {angle}"],
                     "audience_keywords": ["thoughtful shoppers"],
-                    "use_case_keywords": [angle],
+                    "use_case_keywords": [f"{angle} ideas"],
                     "search_intents": intents[creative_type],
-                    "creative_angle": f"{angle} angle {variation}",
+                    "creative_angle": creative_angle,
                 },
-            },
-            ensure_ascii=False,
-        )
+            })
+        return json.dumps({"candidates": result}, ensure_ascii=False)
 
 
 class GeminiAIContentProvider:
@@ -301,6 +306,9 @@ class GeneratedCreative:
     keywords: list[str]
     call_to_action: str
     seo_metadata: dict[str, object]
+    candidate_history: list[dict[str, object]] | None = None
+    selected_candidate_id: str | None = None
+    selection_reason: str | None = None
 
 
 class AIContentService:
@@ -518,7 +526,8 @@ class AIContentService:
             }
             try:
                 raw_content = provider.generate_json(
-                    self._prompt(context, creative_type.value, variation, previous_seo)
+                    self._prompt(context, creative_type.value, variation, previous_seo,
+                                 candidate_count=settings.seo_candidate_count)
                 )
             except Exception as exc:
                 if isinstance(exc, AIProviderRequestError):
@@ -536,15 +545,20 @@ class AIContentService:
                     "AI içerik sağlayıcısı başarısız oldu; hata ayrıntıları güvenlik için gizlendi."
                 ) from None
             self._active_generation["error_category"] = "validation_error"
-            generated = self._parse_generated_json(
-                raw_content,
-                context,
-                creative_type.value,
+            generated, candidate_history = self._select_seo_candidate(
+                raw_content=raw_content,
+                context=context,
+                creative_type=creative_type.value,
+                variation=variation,
+                previous_creatives=previous_seo,
+                product=product,
+                provider_name=provider_name,
+                model_name=model_name,
+                generated_at=started_at,
             )
             self._active_generation["output_snapshot"] = self._seo_output_snapshot(
-                generated, creative_type.value
+                generated, creative_type.value, candidate_history=candidate_history
             )
-            self._ensure_seo_is_novel(generated.seo_metadata, previous_seo)
 
             # ---------------------------------------------------------
             # 2. Create PinCreative database object
@@ -586,7 +600,8 @@ class AIContentService:
                 prompt_version=SEO_PROMPT_VERSION,
                 schema_version=SEO_SCHEMA_VERSION,
                 status="completed",
-                output_snapshot=self._seo_output_snapshot(generated, creative_type.value),
+                output_snapshot=self._seo_output_snapshot(generated, creative_type.value,
+                                                         candidate_history=candidate_history),
             )
             self.db.add(generation)
             self.db.flush()
@@ -622,7 +637,8 @@ class AIContentService:
                     "started_at": started_at,
                     "provider": provider_name,
                     "model_name": model_name,
-                    "output_snapshot": self._seo_output_snapshot(generated, creative_type.value),
+                    "output_snapshot": self._seo_output_snapshot(generated, creative_type.value,
+                                                                 candidate_history=candidate_history),
                     "error_category": "image_generation_error",
                 }
                 try:
@@ -661,10 +677,11 @@ class AIContentService:
 
     @staticmethod
     def _seo_output_snapshot(
-        generated: GeneratedCreative, creative_type: str
+        generated: GeneratedCreative, creative_type: str,
+        *, candidate_history: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         """Copy output fields used later for analytics attribution and audit."""
-        return {
+        snapshot: dict[str, object] = {
             "title": generated.title,
             "description": generated.description,
             "call_to_action": generated.call_to_action,
@@ -672,6 +689,153 @@ class AIContentService:
             "seo_metadata": dict(generated.seo_metadata),
             "creative_type": creative_type,
         }
+        if candidate_history is not None:
+            snapshot["seo_candidate_selection"] = {
+                "selected_candidate_id": generated.selected_candidate_id,
+                "selected_reason": generated.selection_reason,
+                "candidate_count": len(candidate_history),
+                "ranking_version": "seo_candidate_rank_v1",
+                "candidates": candidate_history,
+            }
+        return snapshot
+
+    def _select_seo_candidate(
+        self,
+        *,
+        raw_content: str,
+        context: ProductContext,
+        creative_type: str,
+        variation: int,
+        previous_creatives: list[dict[str, str]],
+        product: Product,
+        provider_name: str,
+        model_name: str,
+        generated_at: datetime,
+    ) -> tuple[GeneratedCreative, list[dict[str, object]]]:
+        """Parse, evaluate and select one valid candidate without extra provider calls."""
+        try:
+            payload = json.loads(raw_content)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise AIValidationError("AI sağlayıcısı geçerli JSON döndürmedi.") from exc
+        if isinstance(payload, dict) and isinstance(payload.get("candidates"), list):
+            raw_candidates = payload["candidates"]
+        elif isinstance(payload, dict):
+            # Backward compatibility for existing provider integrations and tests.
+            raw_candidates = [payload]
+        else:
+            raise AIValidationError("AI yanıtı beklenen JSON nesnesi formatında değil.")
+
+        requested = max(1, min(10, int(settings.seo_candidate_count)))
+        candidate_time = generated_at.replace(tzinfo=timezone.utc).isoformat()
+        candidate_rows: list[dict[str, object]] = []
+        rejected: list[dict[str, object]] = []
+        seen_keys: set[tuple[str, str]] = set()
+        for index, raw_candidate in enumerate(raw_candidates[:requested]):
+            base_record: dict[str, object] = {
+                "candidate_index": index,
+                "generated_at": candidate_time,
+                "generation_method": "ai_provider_structured_candidates",
+                "provider": provider_name,
+                "model": model_name,
+                "prompt_version": SEO_PROMPT_VERSION,
+                "schema_version": SEO_SCHEMA_VERSION,
+            }
+            try:
+                if not isinstance(raw_candidate, dict):
+                    raise AIValidationError("Aday beklenen JSON nesnesi formatında değil.")
+                generated = self._parse_generated_json(
+                    json.dumps(raw_candidate, ensure_ascii=False), context, creative_type
+                )
+                self._ensure_seo_is_novel(generated.seo_metadata, previous_creatives)
+                primary = str(generated.seo_metadata.get("primary_keyword", "")).casefold()
+                angle = str(generated.seo_metadata.get("creative_angle", "")).casefold()
+                if (primary, angle) in seen_keys:
+                    raise AIValidationError("Aday aynı üretimdeki başka bir adayı tekrar ediyor.")
+                seen_keys.add((primary, angle))
+                snapshot = self._seo_output_snapshot(generated, creative_type)
+                candidate_rows.append({**base_record, "candidate_index": index, "snapshot": snapshot})
+                # Temporarily retain parsed output in local memory only; never serialize raw provider JSON.
+                candidate_rows[-1]["_parsed"] = generated
+            except AIValidationError as exc:
+                rejected.append({
+                    **base_record,
+                    "candidate_id": f"seo-candidate-{index + 1}-rejected",
+                    "status": "rejected",
+                    "selected": False,
+                    "ranking_position": None,
+                    "selection_reason": None,
+                    "evaluation": {"valid": False, "rejection_reasons": [str(exc)]},
+                })
+        for index in range(requested, len(raw_candidates)):
+            rejected.append({
+                "candidate_index": index,
+                "candidate_id": f"seo-candidate-{index + 1}-over_limit",
+                "generated_at": candidate_time,
+                "generation_method": "ai_provider_structured_candidates",
+                "provider": provider_name,
+                "model": model_name,
+                "prompt_version": SEO_PROMPT_VERSION,
+                "schema_version": SEO_SCHEMA_VERSION,
+                "status": "rejected",
+                "selected": False,
+                "ranking_position": None,
+                "selection_reason": None,
+                "evaluation": {"valid": False, "rejection_reasons": ["İstenen aday sayısının üzerindeki çıktı değerlendirmeye alınmadı."]},
+            })
+
+        from app.services.seo_candidate_optimizer import evaluate_seo_candidates
+
+        evaluated = evaluate_seo_candidates(
+            self.db,
+            product=product,
+            context=context,
+            creative_type=creative_type,
+            candidates=[{key: value for key, value in item.items() if key != "_parsed"} for item in candidate_rows],
+            provider=provider_name,
+            model=model_name,
+            generated_at=candidate_time,
+            previous_creatives=previous_creatives,
+        )
+        parsed_by_index = {int(item["candidate_index"]): item["_parsed"] for item in candidate_rows}
+        history = [*evaluated, *rejected]
+        history.sort(key=lambda item: int(item.get("candidate_index", 0)))
+        next_rank = max((int(item.get("ranking_position") or 0) for item in history), default=0)
+        for item in history:
+            if item.get("ranking_position") is None:
+                next_rank += 1
+                item["ranking_position"] = next_rank
+        selected = next((item for item in evaluated if item.get("selected")), None)
+        if selected is None:
+            self._active_generation["output_snapshot"] = {
+                "seo_candidate_selection": {
+                    "ranking_version": "seo_candidate_rank_v1",
+                    "candidate_count": len(history),
+                    "candidates": history,
+                }
+            }
+            reason = next((
+                str(item.get("evaluation", {}).get("rejection_reasons", [""])[0])
+                for item in rejected if item.get("evaluation", {}).get("rejection_reasons")
+            ), "geçerli aday bulunamadı")
+            raise AIValidationError(f"SEO adaylarının hiçbiri mevcut doğrulama ve kalite koşullarını geçemedi: {reason}")
+        selected_index = int(selected["candidate_index"])
+        selected["status"] = "selected"
+        for item in history:
+            if item is not selected:
+                item.setdefault("status", "ranked" if item.get("evaluation", {}).get("valid") else "rejected")
+            item.pop("candidate_index", None)
+        generated = parsed_by_index[selected_index]
+        generated = GeneratedCreative(
+            title=generated.title,
+            description=generated.description,
+            keywords=generated.keywords,
+            call_to_action=generated.call_to_action,
+            seo_metadata=generated.seo_metadata,
+            candidate_history=history,
+            selected_candidate_id=str(selected["candidate_id"]),
+            selection_reason=str(selected["selection_reason"] or "En yüksek geçerli deterministik skor."),
+        )
+        return generated, history
 
     def ensure_mockup_creatives(self, product: Product, listing: EtsyListing) -> list[PinCreative]:
         """Add each Etsy image to the Pin pool once, without invoking an AI provider.
@@ -789,6 +953,8 @@ class AIContentService:
         creative_type: str,
         variation: int,
         previous_creatives: list[dict[str, str]] | None = None,
+        *,
+        candidate_count: int = 3,
     ) -> str:
         """Build a grounded, structured Pinterest SEO v2 Gemini prompt."""
 
@@ -814,11 +980,12 @@ class AIContentService:
             "product_type_hint": _product_type_hint(context),
             "variation": variation,
             "previous_ai_creatives": (previous_creatives or [])[-8:],
+            "candidate_count": max(1, min(10, int(candidate_count))),
         }
 
         return (
-            "Create one Pinterest SEO v2 creative for the supplied Etsy product. "
-            "Return JSON only, with exactly title, description, call_to_action, and seo. "
+            f"Create {data['candidate_count']} distinct Pinterest SEO v2 candidates for the supplied product. "
+            "Return JSON only as an object with one candidates array; each item must contain exactly title, description, call_to_action, and seo. "
             "The seo object must contain exactly primary_keyword, secondary_keywords, "
             "long_tail_keywords, audience_keywords, use_case_keywords, search_intents, "
             "and creative_angle. Keyword groups are JSON arrays of concise strings. "

@@ -8,13 +8,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from app.models import Pin, PinCreative, PinGenerationJob
+from app.models import Pin, PinCreative, PinGenerationJob, PinterestAccount
 from app.models.core import PinCreativeSourceType, PinCreativeStatus, PinStatus
 from app.services.ai_pipeline import AI_DAILY_CREATIVE_QUOTA, enqueue_daily_generation_job
+from app.services.content_portfolio_optimizer import optimize_content_portfolio
+from app.services.opportunity_engine import score_existing_creative_opportunities
+from app.services.keyword_intelligence import normalize_keyword
 
 
 DAILY_PIN_TARGET = 15
@@ -38,6 +42,7 @@ class DailyScheduleResult:
     ai_prepared: int
     ai_jobs_created: int
     pending_ai_jobs: int
+    portfolio_summary: dict[str, Any] | None = None
 
     @property
     def remaining(self) -> int:
@@ -74,6 +79,7 @@ class DailyPinScheduler:
         slots_needed = max(0, self.daily_target - already_prepared)
         pending_jobs = self.db.query(PinGenerationJob).filter_by(status="pending").count()
         ai_jobs_created = int(enqueue_daily_generation_job(self.db))
+        portfolio_summary: dict[str, Any] = optimize_content_portfolio([], target=0)["summary"]
 
         if not slots_needed:
             self.db.commit()
@@ -86,18 +92,22 @@ class DailyPinScheduler:
                 ai_prepared=0,
                 ai_jobs_created=ai_jobs_created,
                 pending_ai_jobs=pending_jobs,
+                portfolio_summary=portfolio_summary,
             )
 
         used_creative_ids = set(self.db.scalars(
             select(Pin.creative_id).where(Pin.creative_id.is_not(None))
         ).all())
-        used_images = {
-            (product_id, image_path)
-            for product_id, image_path in self.db.execute(
-                select(Pin.product_id, Pin.image_path).where(Pin.image_path.is_not(None))
-            )
-            if product_id is not None and image_path
-        }
+        used_images: set[tuple[int, str]] = set()
+        prior_image_rows = self.db.execute(
+            select(Pin.product_id, Pin.image_path, PinCreative.source_image_url)
+            .outerjoin(PinCreative, Pin.creative_id == PinCreative.id)
+            .where(Pin.product_id.is_not(None))
+        )
+        for product_id, image_path, source_image_url in prior_image_rows:
+            for image_identifier in (image_path, source_image_url):
+                if image_identifier:
+                    used_images.add((product_id, image_identifier))
 
         candidates = self.db.scalars(
             select(PinCreative).where(
@@ -108,8 +118,7 @@ class DailyPinScheduler:
             )
         ).all()
         candidates.sort(key=self._candidate_sort_key)
-
-        selected: list[PinCreative] = []
+        available: list[PinCreative] = []
         for creative in candidates:
             if creative.id in used_creative_ids:
                 continue
@@ -119,17 +128,62 @@ class DailyPinScheduler:
                 image_identifier,
             ) in used_images:
                 continue
-            selected.append(creative)
+            available.append(creative)
+            if image_identifier:
+                # Reserve the source image as soon as its highest-priority
+                # creative enters the candidate pool, before portfolio ranking.
+                used_images.add((creative.product_id, image_identifier))
+
+        active_accounts = list(self.db.scalars(
+            select(PinterestAccount).where(PinterestAccount.is_active.is_(True)).order_by(PinterestAccount.id)
+        ))
+        account_id = active_accounts[0].id if len(active_accounts) == 1 else None
+        opportunity_by_creative = score_existing_creative_opportunities(
+            self.db, available, account_id=account_id, apply_learning=False
+        )
+        recent_history = self._recent_portfolio_history(target_date)
+        saturation = self._saturation_counts(recent_history)
+        portfolio_candidates = [
+            self._portfolio_candidate(creative, opportunity_by_creative.get(creative.id, {}), saturation)
+            for creative in available
+        ]
+        portfolio = optimize_content_portfolio(
+            portfolio_candidates, target=slots_needed, recent_history=recent_history
+        )
+        portfolio_summary = portfolio["summary"]
+        selected_candidates = portfolio["selected"]
+        selected = [candidate["creative"] for candidate in selected_candidates]
+        selection_by_id = {candidate["candidate_id"]: candidate for candidate in selected_candidates}
+        for creative in selected:
             used_creative_ids.add(creative.id)
+            image_identifier = creative.source_image_url or creative.image_path
             if image_identifier:
                 used_images.add((creative.product_id, image_identifier))
-            if len(selected) == slots_needed:
-                break
 
-        prepared = tuple(
-            self._pin_from_creative(creative, target_date, already_prepared + index)
-            for index, creative in enumerate(selected)
-        )
+        prepared_rows = []
+        for index, creative in enumerate(selected):
+            pin = self._pin_from_creative(creative, target_date, already_prepared + index)
+            selected_candidate = selection_by_id[creative.id]
+            pin.portfolio_snapshot = {
+                **selected_candidate["portfolio"],
+                "opportunity_score": selected_candidate.get("opportunity_score"),
+                "creative_id": creative.id,
+                "creative_type": creative.creative_type,
+                "creative_angle": selected_candidate.get("creative_angle"),
+                "primary_keyword": selected_candidate.get("keyword"),
+                "keyword_cluster": selected_candidate.get("cluster"),
+                "board": {
+                    "id": selected_candidate.get("board"),
+                    "name": selected_candidate.get("board_name"),
+                } if selected_candidate.get("board") is not None else None,
+                "season": selected_candidate.get("season"),
+                "performance_status": selected_candidate.get("performance_status"),
+                "performance_sample_count": selected_candidate.get("performance_sample_count", 0),
+                "performance_source_snapshot_ids": selected_candidate.get("performance_source_snapshot_ids", []),
+                "portfolio_summary": portfolio_summary,
+            }
+            prepared_rows.append(pin)
+        prepared = tuple(prepared_rows)
         self.db.add_all(prepared)
         self.db.commit()
 
@@ -147,7 +201,99 @@ class DailyPinScheduler:
             ),
             ai_jobs_created=ai_jobs_created,
             pending_ai_jobs=self.db.query(PinGenerationJob).filter_by(status="pending").count(),
+            portfolio_summary=portfolio_summary,
         )
+
+    def _recent_portfolio_history(self, target_date: date) -> list[dict[str, Any]]:
+        start = datetime.combine(target_date - timedelta(days=30), time.min)
+        end = datetime.combine(target_date, time.max)
+        rows = self.db.scalars(
+            select(Pin).where(
+                Pin.scheduled_for >= start,
+                Pin.scheduled_for <= end,
+                Pin.status.in_((PinStatus.SCHEDULED.value, PinStatus.PUBLISHED.value)),
+            ).options(joinedload(Pin.creative))
+        ).all()
+        history = []
+        for pin in rows:
+            creative = pin.creative
+            if creative is None:
+                continue
+            metadata = creative.seo_metadata if isinstance(creative.seo_metadata, dict) else {}
+            keyword = normalize_keyword(metadata.get("primary_keyword", ""))
+            if not keyword:
+                keyword = next((normalize_keyword(value) for value in (creative.keywords or [])
+                                if isinstance(value, str) and normalize_keyword(value)), "")
+            portfolio = pin.portfolio_snapshot or {}
+            history.append({
+                "keyword": keyword,
+                "cluster": portfolio.get("keyword_cluster") or keyword,
+                "creative_type": creative.creative_type,
+                "creative_angle": metadata.get("creative_angle") or "",
+                "board": (portfolio.get("board") or {}).get("id") if isinstance(portfolio.get("board"), dict) else portfolio.get("board"),
+                "season": portfolio.get("season"),
+            })
+        return history
+
+    @staticmethod
+    def _saturation_counts(history: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+        counts: dict[str, dict[str, int]] = {}
+        fields = ("keyword", "cluster", "creative_type", "creative_angle", "board")
+        for field in fields:
+            values: dict[str, int] = {}
+            for row in history:
+                value = row.get(field)
+                if value not in (None, ""):
+                    key = str(value)
+                    values[key] = values.get(key, 0) + 1
+            counts[field] = values
+        return counts
+
+    @staticmethod
+    def _portfolio_candidate(
+        creative: PinCreative, opportunity: dict[str, Any], saturation: dict[str, dict[str, int]]
+    ) -> dict[str, Any]:
+        metadata = creative.seo_metadata if isinstance(creative.seo_metadata, dict) else {}
+        keyword = normalize_keyword(metadata.get("primary_keyword", ""))
+        if not keyword:
+            keyword = next((normalize_keyword(value) for value in (creative.keywords or [])
+                            if isinstance(value, str) and normalize_keyword(value)), "")
+        keyword = keyword or None
+        cluster = opportunity.get("keyword_cluster") or keyword
+        board_id = opportunity.get("board_id")
+        board_label = str(board_id) if board_id is not None else opportunity.get("board_name")
+        components = opportunity.get("components") or {}
+        feature_values = {
+            "keyword": keyword,
+            "cluster": cluster,
+            "creative_type": creative.creative_type,
+            "creative_angle": opportunity.get("creative_angle") or metadata.get("creative_angle"),
+            "board": board_label,
+            "board_name": opportunity.get("board_name"),
+        }
+        learned = opportunity.get("performance_learning") or {}
+        return {
+            **feature_values,
+            "candidate_id": creative.id,
+            "creative": creative,
+            "priority_tier": DailyPinScheduler._candidate_sort_key(creative)[:2],
+            "opportunity_score": opportunity.get("opportunity_score"),
+            "opportunity_components": components,
+            "opportunity_learning_applied": opportunity.get("learning_applied", False),
+            "quality_score": components.get("seo_quality"),
+            "board_fit": components.get("board_fit"),
+            "seasonal_score": components.get("seasonal_relevance"),
+            "season": opportunity.get("season"),
+            "performance_learning": learned,
+            "performance_status": learned.get("status", "unknown"),
+            "performance_sample_count": learned.get("sample_count", 0),
+            "performance_source_snapshot_ids": learned.get("source_snapshot_ids", []),
+            "saturation": {
+                field: saturation.get(field, {}).get(str(value), 0)
+                for field, value in feature_values.items()
+            } | {"total": sum(saturation.get(field, {}).get(str(value), 0)
+                              for field, value in feature_values.items())},
+        }
 
     @staticmethod
     def _candidate_sort_key(creative: PinCreative) -> tuple[int, int, datetime, int]:

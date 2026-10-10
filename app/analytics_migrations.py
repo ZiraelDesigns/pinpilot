@@ -392,6 +392,9 @@ def upgrade_analytics_schema(engine: Engine) -> None:
         },
     }
     provenance_columns = {
+        "pins": {
+            "portfolio_snapshot": "JSON",
+        },
         "published_pinterest_pins": {
             "seo_generation_id": "INTEGER REFERENCES seo_generations(id) ON DELETE SET NULL",
         },
