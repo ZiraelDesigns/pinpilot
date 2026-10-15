@@ -14,7 +14,7 @@ router = APIRouter(prefix="/pinterest", tags=["pinterest"])
 
 def _dashboard_redirect(message: str, error: bool = False) -> RedirectResponse:
     key = "pinterest_error" if error else "pinterest_message"
-    return RedirectResponse(url=f"/?{urlencode({key: message})}", status_code=303)
+    return RedirectResponse(url=f"/dashboard?{urlencode({key: message})}", status_code=303)
 
 
 @router.post("/connect", dependencies=[Depends(require_admin_csrf)])

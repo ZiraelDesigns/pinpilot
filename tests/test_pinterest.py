@@ -1,5 +1,6 @@
 from urllib.parse import parse_qs, urlparse
 from datetime import datetime, timedelta
+from html import unescape
 
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
@@ -109,6 +110,9 @@ def test_callback_uses_mocked_pinterest_responses_without_network(monkeypatch):
         callback = client.get(f"/pinterest/callback?code=mock-code&state={state}", follow_redirects=False)
 
     assert callback.status_code == 303
+    callback_location = urlparse(callback.headers["location"])
+    callback_message = parse_qs(callback_location.query)["pinterest_message"][0]
+    assert callback_location.path == "/dashboard"
     db = SessionLocal()
     try:
         account = db.query(PinterestAccount).filter_by(account_identifier="mock-business").one()
@@ -117,6 +121,60 @@ def test_callback_uses_mocked_pinterest_responses_without_network(monkeypatch):
         db.commit()
     finally:
         db.close()
+    with TestClient(app) as client:
+        assert callback_message in unescape(client.get(callback.headers["location"]).text)
+
+
+def test_pinterest_connection_sync_and_callback_results_redirect_to_dashboard(monkeypatch):
+    _configure_pinterest(monkeypatch)
+
+    def unavailable_authorization_url(*_args):
+        raise PinterestIntegrationError("Pinterest OAuth unavailable & retry")
+
+    monkeypatch.setattr(PinterestOAuthService, "authorization_url", unavailable_authorization_url)
+    with TestClient(app) as client:
+        connection_error = client.post("/pinterest/connect", follow_redirects=False)
+        error_location = urlparse(connection_error.headers["location"])
+        error_message = parse_qs(error_location.query)["pinterest_error"][0]
+        assert connection_error.status_code == 303
+        assert error_location.path == "/dashboard"
+        assert error_message == "Pinterest OAuth unavailable & retry"
+        assert error_message in unescape(client.get(connection_error.headers["location"]).text)
+
+        missing_account = client.post("/pinterest/boards/sync", follow_redirects=False)
+        missing_location = urlparse(missing_account.headers["location"])
+        missing_message = parse_qs(missing_location.query)["pinterest_error"][0]
+        assert missing_account.status_code == 303
+        assert missing_location.path == "/dashboard"
+        assert missing_message == "Önce bir Pinterest hesabı bağlayın."
+        assert missing_message in unescape(client.get(missing_account.headers["location"]).text)
+
+        from app.database import SessionLocal
+
+        with SessionLocal() as db:
+            db.add(PinterestAccount(
+                account_name="Sync test", account_identifier="sync-test", is_active=True,
+            ))
+            db.commit()
+        monkeypatch.setattr(PinterestApiService, "sync_boards", lambda *_: 4)
+        sync_success = client.post("/pinterest/boards/sync", follow_redirects=False)
+        success_location = urlparse(sync_success.headers["location"])
+        success_message = parse_qs(success_location.query)["pinterest_message"][0]
+        assert sync_success.status_code == 303
+        assert success_location.path == "/dashboard"
+        assert success_message == "4 Pinterest board eşitlendi."
+        assert success_message in unescape(client.get(sync_success.headers["location"]).text)
+
+        callback_error = client.get(
+            "/pinterest/callback?error=access_denied&error_description=Review+cancelled",
+            follow_redirects=False,
+        )
+        callback_location = urlparse(callback_error.headers["location"])
+        callback_message = parse_qs(callback_location.query)["pinterest_error"][0]
+        assert callback_error.status_code == 303
+        assert callback_location.path == "/dashboard"
+        assert callback_message == "Review cancelled"
+        assert callback_message in unescape(client.get(callback_error.headers["location"]).text)
 
 
 def test_local_boards_endpoint_returns_board_id_and_name():

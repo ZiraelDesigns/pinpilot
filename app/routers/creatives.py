@@ -80,7 +80,7 @@ def approve(creative_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Creative bulunamadı.")
     creative.status = PinCreativeStatus.APPROVED.value
     db.commit()
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 
 @router.post("/{creative_id}/delete", dependencies=[Depends(require_admin_csrf)])
@@ -90,4 +90,4 @@ def delete(creative_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Creative bulunamadı.")
     db.delete(creative)
     db.commit()
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/dashboard", status_code=303)

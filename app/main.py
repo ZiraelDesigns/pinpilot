@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -101,6 +102,17 @@ app.include_router(auth_router)
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
 
 
+def _dashboard_page_url(request: Request, page: int) -> str:
+    """Keep the current query context while replacing only the page number."""
+    query_items = (
+        [(key, value) for key, value in request.query_params.multi_items() if key != "page"]
+        if request.scope.get("query_string")
+        else []
+    )
+    query_items.append(("page", str(page)))
+    return f"/dashboard?{urlencode(query_items)}"
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": settings.app_name}
@@ -113,6 +125,12 @@ def privacy_policy() -> FileResponse:
 
 
 @app.get("/", response_class=HTMLResponse)
+def public_home() -> FileResponse:
+    """Serve public-facing information without loading private dashboard data."""
+    return FileResponse(PROJECT_ROOT / "index.html", media_type="text/html")
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(
     request: Request,
     principal: AuthPrincipal | None = Depends(get_principal),
@@ -299,6 +317,8 @@ def dashboard(
             "analytics_start_date": analytics_start.isoformat(),
             "analytics_end_date": analytics_end.isoformat(),
             "analytics_filter_error": filter_error,
+            "analytics_previous_page_url": _dashboard_page_url(request, analytics_page - 1),
+            "analytics_next_page_url": _dashboard_page_url(request, analytics_page + 1),
             "experiments": experiments,
             "next_best_pins": next_best_pins,
             "today_portfolio": today_portfolio,

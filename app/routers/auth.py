@@ -33,7 +33,7 @@ def _login_page(csrf_token: str = "", message: str = "", *, status_code: int = 2
 <form method="post" action="/auth/login"><input type="hidden" name="_csrf" value="{escape(csrf_token)}">
 <label>Kullanıcı adı <input name="username" autocomplete="username" required></label>
 <label>Parola <input name="password" type="password" autocomplete="current-password" required></label>
-<button type="submit">Giriş yap</button></form><p><a href="/">Panele dön</a></p></section></main></body></html>"""
+<button type="submit">Giriş yap</button></form><p><a href="/">Ana sayfaya dön</a></p></section></main></body></html>"""
     response = HTMLResponse(content, status_code=status_code)
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -54,7 +54,7 @@ def _set_cookie(response, name: str, value: str, *, max_age: int, http_only: boo
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     if get_principal(request):
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/dashboard", status_code=303)
     if not auth_is_configured():
         return _login_page(
             message=(
@@ -106,7 +106,7 @@ async def login(request: Request):
         return _login_page(message="Kullanıcı adı veya parola geçersiz.", status_code=401)
 
     token, _csrf = create_session_token(settings.app_auth_username or "")
-    response = RedirectResponse("/", status_code=303)
+    response = RedirectResponse("/dashboard", status_code=303)
     response.headers["Cache-Control"] = "no-store"
     _set_cookie(response, SESSION_COOKIE, token, max_age=settings.app_session_ttl_seconds)
     response.delete_cookie(

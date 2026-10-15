@@ -109,7 +109,7 @@ def _csrf_login(monkeypatch, client):
         follow_redirects=False,
     )
     assert response.status_code == 303
-    dashboard = client.get("/")
+    dashboard = client.get("/dashboard")
     return re.search(r'<meta name="csrf-token" content="([^"]+)"', dashboard.text).group(1)
 
 

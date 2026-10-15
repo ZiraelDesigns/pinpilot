@@ -391,7 +391,7 @@ def test_dashboard_shows_pipeline_state_quota_and_mockup_exclusion():
         db.add(creative)
         db.commit()
         db.close()
-        response = client.get("/")
+        response = client.get("/dashboard")
         assert response.status_code == 200
         assert 'id="ai-pipeline-state">AÇIK<' in response.text
         assert 'id="ai-quota-used">0/15<' in response.text

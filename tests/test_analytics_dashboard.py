@@ -1,4 +1,7 @@
 from datetime import date, datetime
+from html import unescape
+import re
+from urllib.parse import parse_qs, urlparse
 
 from sqlalchemy import event
 
@@ -336,10 +339,51 @@ def test_dashboard_route_renders_analytics_empty_state_and_date_controls():
         db.add(PinterestAccount(account_name="dashboard-account", account_identifier="dashboard-account", is_active=True))
         db.commit()
     with TestClient(app) as client:
-        response = client.get("/", params={"period": "custom", "start_date": "2026-08-01", "end_date": "2026-08-31"})
+        response = client.get("/dashboard", params={"period": "custom", "start_date": "2026-08-01", "end_date": "2026-08-31"})
 
     assert response.status_code == 200
     assert "Pinterest Analizleri" in response.text
     assert "Tarih aralığı" in response.text
     assert "Bu tarih aralığında analiz verisi veya yayınlanmış Pin yok." in response.text
     assert "Pin performansı" in response.text
+
+
+def test_dashboard_pagination_links_keep_encoded_query_context_and_dashboard_path():
+    with SessionLocal() as db:
+        account = None
+        board_id = None
+        for index in range(22):
+            account, _, _, _, publication = _published(
+                db,
+                title=f"Page product {index:02}",
+                account_name="pagination-account",
+                external_id=f"pagination-pin-{index}",
+            )
+            board_id = publication.board.id
+            _snapshot(db, publication)
+        account_id = account.id
+        db.commit()
+
+    common_params = {
+        "period": "custom",
+        "start_date": "2026-09-01",
+        "end_date": "2026-09-30",
+        "account_id": str(account_id),
+        "creative_type": "product_focus",
+        "source_type": "mockup",
+        "board_id": str(board_id),
+        "search": "summer gift & decor",
+    }
+    with TestClient(app) as client:
+        first_page = client.get("/dashboard", params={**common_params, "page": 1})
+        second_page = client.get("/dashboard", params={**common_params, "page": 2})
+
+    next_href = unescape(re.search(r'<a href="([^"]+)">Sonraki</a>', first_page.text).group(1))
+    previous_href = unescape(re.search(r'<a href="([^"]+)">Önceki</a>', second_page.text).group(1))
+    for href, expected_page in ((next_href, "2"), (previous_href, "1")):
+        parsed = urlparse(href)
+        query = parse_qs(parsed.query)
+        assert parsed.path == "/dashboard"
+        assert query["page"] == [expected_page]
+        for key, value in common_params.items():
+            assert query[key] == [value]

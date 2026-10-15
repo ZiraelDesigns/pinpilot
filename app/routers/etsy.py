@@ -14,7 +14,7 @@ router = APIRouter(prefix="/etsy", tags=["etsy"])
 
 def _dashboard_redirect(message: str, error: bool = False) -> RedirectResponse:
     key = "etsy_error" if error else "etsy_message"
-    return RedirectResponse(url=f"/?{urlencode({key: message})}", status_code=303)
+    return RedirectResponse(url=f"/dashboard?{urlencode({key: message})}", status_code=303)
 
 
 @router.post("/connect", dependencies=[Depends(require_admin_csrf)])

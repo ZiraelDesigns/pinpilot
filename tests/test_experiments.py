@@ -450,7 +450,7 @@ def test_dashboard_renders_frozen_variant_values_null_zero_and_period_scoped_emp
         db.commit()
         experiment_id = experiment.id
     with TestClient(app) as client:
-        html = client.get("/").text
+        html = client.get("/dashboard").text
         detail = client.get(f"/experiments/{experiment_id}").json()
     assert "Değerlendirme için analiz verisi yok" in html
     assert "Veri yok" in html and ">0<" in html
@@ -580,7 +580,7 @@ def test_api_create_variant_assignment_list_detail_and_evaluation():
 
 def test_dashboard_keeps_analytics_sections_and_shows_empty_experiments():
     with TestClient(app) as client:
-        response = client.get("/")
+        response = client.get("/dashboard")
 
     assert response.status_code == 200
     assert "Pin performans özeti" in response.text

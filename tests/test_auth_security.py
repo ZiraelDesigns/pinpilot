@@ -66,7 +66,11 @@ def test_anonymous_private_reads_are_blocked_while_public_pages_remain_open(monk
         ]
         assert [response.status_code for response in requests] == [401] * len(requests)
 
-        dashboard = client.get("/", follow_redirects=False)
+        landing = client.get("/", follow_redirects=False)
+        assert landing.status_code == 200
+        assert "ZiraelDesigns" in landing.text
+        assert "Dashboard action test product" not in landing.text
+        dashboard = client.get("/dashboard", follow_redirects=False)
         assert dashboard.status_code == 303
         assert dashboard.headers["location"] == "/auth/login"
         assert "Dashboard action test product" not in dashboard.text
@@ -95,7 +99,10 @@ def test_dashboard_operation_buttons_reflect_admin_session_without_misleading_bu
         db.commit()
 
     with TestClient(app, base_url="https://testserver") as client:
-        anonymous_dashboard = client.get("/", follow_redirects=False)
+        anonymous_landing = client.get("/", follow_redirects=False)
+        assert anonymous_landing.status_code == 200
+        assert "Dashboard action test product" not in anonymous_landing.text
+        anonymous_dashboard = client.get("/dashboard", follow_redirects=False)
         assert anonymous_dashboard.status_code == 303
         assert anonymous_dashboard.headers["location"] == "/auth/login"
         assert 'id="ai-pipeline-toggle"' not in anonymous_dashboard.text
@@ -106,7 +113,7 @@ def test_dashboard_operation_buttons_reflect_admin_session_without_misleading_bu
         assert "button:disabled { opacity: .6; cursor: wait; }" not in stylesheet
 
         assert _login(client).status_code == 303
-        admin_dashboard = client.get("/").text
+        admin_dashboard = client.get("/dashboard").text
         assert 'id="ai-pipeline-toggle"' in admin_dashboard
         assert '<form id="creative-generate-form">' in admin_dashboard
         admin_pipeline_button = re.search(r'<button id="ai-pipeline-toggle"[^>]*>', admin_dashboard).group(0)
@@ -142,12 +149,13 @@ def test_login_requires_login_csrf_and_sets_hardened_expiring_admin_cookie(monke
 
         response = _login(client)
         assert response.status_code == 303
+        assert response.headers["location"] == "/dashboard"
         cookie_header = response.headers["set-cookie"].lower()
         assert "httponly" in cookie_header
         assert "secure" in cookie_header
         assert "samesite=lax" in cookie_header
         assert "max-age=28800" in cookie_header
-        assert client.get("/").text.startswith("<!doctype html>")
+        assert client.get("/dashboard").text.startswith("<!doctype html>")
 
 
 def test_unicode_admin_credentials_are_compared_safely(monkeypatch):
@@ -163,13 +171,15 @@ def test_unicode_admin_credentials_are_compared_safely(monkeypatch):
             follow_redirects=False,
         )
         assert response.status_code == 303
+        assert response.headers["location"] == "/dashboard"
+        assert client.get("/auth/login", follow_redirects=False).headers["location"] == "/dashboard"
 
 
 def test_authenticated_requests_require_matching_csrf_and_admin_role(monkeypatch):
     _strict_auth(monkeypatch)
     with TestClient(app, base_url="https://testserver") as client:
         assert _login(client).status_code == 303
-        dashboard = client.get("/").text
+        dashboard = client.get("/dashboard").text
         csrf = re.search(r'<meta name="csrf-token" content="([^"]+)"', dashboard).group(1)
 
         missing = client.post("/pipeline/toggle", json={"enabled": False})
@@ -200,7 +210,7 @@ def test_valid_csrf_hidden_form_token_allows_logout(monkeypatch):
     _strict_auth(monkeypatch)
     with TestClient(app, base_url="https://testserver") as client:
         assert _login(client).status_code == 303
-        dashboard = client.get("/").text
+        dashboard = client.get("/dashboard").text
         csrf = re.search(r'<meta name="csrf-token" content="([^"]+)"', dashboard).group(1)
         response = client.post("/auth/logout", data={"_csrf": csrf}, follow_redirects=False)
         assert response.status_code == 303

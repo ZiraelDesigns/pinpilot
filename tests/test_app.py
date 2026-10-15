@@ -32,6 +32,19 @@ def test_privacy_policy_is_served_from_public_route():
     assert "pinpilot.vesvada.store" not in response.text
 
 
+def test_public_homepage_describes_pinpilot_and_links_privacy_policy():
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "ZiraelDesigns" in response.text
+    assert "Pinterest content planning" in response.text
+    assert "SEO metadata" in response.text
+    assert "Automatic Pinterest publishing and production analytics collection are not enabled" in response.text
+    assert 'href="/privacy-policy.html"' in response.text
+
+
 def test_dashboard_shows_empty_counts():
     with tempfile.TemporaryDirectory() as tmpdir:
         database_path = Path(tmpdir) / "test.db"
@@ -58,7 +71,7 @@ def test_dashboard_shows_empty_counts():
 
         try:
             with TestClient(app) as client:
-                response = client.get("/")
+                response = client.get("/dashboard")
         finally:
             app.dependency_overrides.clear()
             test_engine.dispose()
