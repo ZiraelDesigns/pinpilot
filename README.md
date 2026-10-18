@@ -1,6 +1,7 @@
-# PinPilot
+# ZiraelDesigns Content Studio
 
-PinPilot is a local FastAPI foundation for managing products and pins.
+ZiraelDesigns Content Studio is a local FastAPI workspace for preparing and
+organizing Pinterest content for ZiraelDesigns.
 
 ## Run locally
 
@@ -29,7 +30,7 @@ state checks.
 
 ## Etsy bağlantısı (read-only)
 
-PinPilot Etsy Open API v3 için OAuth 2.0 Authorization Code + PKCE akışını destekler. Bağlantı yalnızca mağaza ve aktif listing verilerini okumak içindir; Etsy'ye hiçbir veri yazılmaz veya değiştirilmez.
+ZiraelDesigns Content Studio Etsy Open API v3 için OAuth 2.0 Authorization Code + PKCE akışını destekler. Bağlantı yalnızca mağaza ve aktif listing verilerini okumak içindir; Etsy'ye hiçbir veri yazılmaz veya değiştirilmez.
 
 1. Etsy Developer portalında uygulamanızı oluşturun ve tam olarak `ETSY_REDIRECT_URI` değerini callback URL olarak kaydedin. Etsy callback URL'sinin HTTPS olmasını ve karakter karakter eşleşmesini ister.
 2. `.env.example` dosyasını `.env` olarak kopyalayın ve aşağıdaki gerçek değerleri yalnızca yerel `.env` dosyanıza girin:
@@ -86,8 +87,8 @@ PUBLIC_BASE_URL=https://pins.example.com
 
 No temporary Cloudflare tunnel is required. Cloudflare’s free DNS/proxy can be
 used if a domain is already managed there, but it does not replace ownership of
-a stable domain. Until a stable HTTPS hostname is configured, PinPilot safely
-retains relative media paths and future Pinterest publishing must not use them.
+a stable domain. Until a stable HTTPS hostname is configured, the application
+safely retains relative media paths and future Pinterest publishing must not use them.
 
 ## Production daily Pin queue
 
@@ -130,7 +131,7 @@ failure, and snapshot counts.
 
 With the checked-in defaults (`AI_PROVIDER=mock`, `AI_IMAGE_PROVIDER=mock`,
 `PINTEREST_PUBLISH_ENABLED=false`, and
-`PINTEREST_ANALYTICS_COLLECTION_ENABLED=false`), PinPilot does not automatically
+`PINTEREST_ANALYTICS_COLLECTION_ENABLED=false`), the application does not automatically
 start Gemini generation, Pinterest publishing/analytics collection, or external
 trend-data collection. Pinterest OAuth/read operations remain explicit,
 user-initiated flows when valid credentials are configured; they are separate

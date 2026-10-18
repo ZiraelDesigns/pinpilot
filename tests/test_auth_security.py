@@ -139,6 +139,8 @@ def test_login_requires_login_csrf_and_sets_hardened_expiring_admin_cookie(monke
     with TestClient(app, base_url="https://testserver") as client:
         login_page = client.get("/auth/login")
         assert login_page.status_code == 200
+        assert "ZiraelDesigns Content Studio" in login_page.text
+        assert "pinpilot" not in login_page.text.casefold()
         missing_csrf = client.post("/auth/login", data={"username": "owner", "password": "a-long-test-password-123"})
         assert missing_csrf.status_code == 403
         malformed_csrf = client.post(

@@ -18,7 +18,7 @@ def test_health_endpoint():
         response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "PinPilot"}
+    assert response.json() == {"status": "ok", "service": "ZiraelDesigns Content Studio"}
 
 
 def test_privacy_policy_is_served_from_public_route():
@@ -30,19 +30,33 @@ def test_privacy_policy_is_served_from_public_route():
     assert "Privacy Policy" in response.text
     assert "https://ziraelautomation.vesvada.store/privacy-policy.html" in response.text
     assert "pinpilot.vesvada.store" not in response.text
+    assert "ZiraelDesigns Content Studio" in response.text
+    assert "pinpilot" not in response.text.casefold()
 
 
-def test_public_homepage_describes_pinpilot_and_links_privacy_policy():
+def test_public_homepage_uses_ziraeldesigns_content_studio_brand_and_links_privacy_policy():
     with TestClient(app) as client:
         response = client.get("/")
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert "ZiraelDesigns" in response.text
+    assert "ZiraelDesigns Content Studio" in response.text
+    assert "pinpilot" not in response.text.casefold()
     assert "Pinterest content planning" in response.text
     assert "SEO metadata" in response.text
+    assert 'property="og:title" content="ZiraelDesigns Content Studio' in response.text
+    assert 'name="twitter:title" content="ZiraelDesigns Content Studio' in response.text
     assert "Automatic Pinterest publishing and production analytics collection are not enabled" in response.text
     assert 'href="/privacy-policy.html"' in response.text
+
+
+def test_public_openapi_metadata_uses_public_brand():
+    with TestClient(app) as client:
+        response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    assert response.json()["info"]["title"] == "ZiraelDesigns Content Studio"
+    assert "pinpilot" not in response.text.casefold()
 
 
 def test_dashboard_shows_empty_counts():
