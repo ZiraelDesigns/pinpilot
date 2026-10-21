@@ -34,6 +34,10 @@ def test_privacy_policy_is_served_from_public_route():
     assert "ZiraelDesigns Content Studio" not in response.text
     assert "ziraelamz@gmail.com" in response.text
     assert "personal project and private workspace" in response.text
+    assert "not a registered company name" in response.text
+    assert "no company or other legal entity is claimed" in response.text
+    assert "operator's full legal name is not included" in response.text
+    assert "have not been determined here" in response.text
     assert "selected Pins and publication schedule" in response.text
     assert "automatic production publishing is currently disabled" in response.text.casefold()
     assert "user_accounts:read" in response.text
