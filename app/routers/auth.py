@@ -27,8 +27,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 def _login_page(csrf_token: str = "", message: str = "", *, status_code: int = 200) -> HTMLResponse:
     content = f"""<!doctype html>
 <html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ZiraelDesigns Content Studio | Yönetici girişi</title><link rel="stylesheet" href="/static/style.css"></head>
-<body><main><section class="etsy-connection"><h1>ZiraelDesigns Content Studio yönetici girişi</h1>
+<title>ZiraelAutomation Content Studio | Yönetici girişi</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><main><section class="etsy-connection"><h1>ZiraelAutomation Content Studio yönetici girişi</h1>
 {f'<p class="notice error">{escape(message)}</p>' if message else ''}
 <form method="post" action="/auth/login"><input type="hidden" name="_csrf" value="{escape(csrf_token)}">
 <label>Kullanıcı adı <input name="username" autocomplete="username" required></label>

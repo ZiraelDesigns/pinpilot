@@ -1,7 +1,10 @@
-# ZiraelDesigns Content Studio
+# ZiraelAutomation Content Studio
 
-ZiraelDesigns Content Studio is a local FastAPI workspace for preparing and
-organizing Pinterest content for ZiraelDesigns.
+ZiraelAutomation Content Studio is a private FastAPI workspace for preparing,
+organizing, and scheduling Pinterest content. ZiraelAutomation is the public
+service brand; this name does not assert a registered legal entity. The public
+site is https://ziraelautomation.vesvada.store/ and the privacy notice is
+https://ziraelautomation.vesvada.store/privacy-policy.html.
 
 ## Run locally
 
@@ -11,13 +14,15 @@ Use the project virtual environment:
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/` for the dashboard and `http://127.0.0.1:8000/health` for health status.
+Open `http://127.0.0.1:8000/` for the public service information page, sign in at
+`http://127.0.0.1:8000/auth/login`, and use `/dashboard` for the private admin
+workspace. `/health` reports service health.
 
 ## Dashboard administrator access
 
-The dashboard's existing read-only views remain available without signing in.
-All state-changing browser/API operations require the configured single admin
-session and a CSRF token. Before enabling dashboard mutations, provide
+The dashboard and private read-only API views require the configured single
+administrator session. State-changing browser/API operations additionally
+require a CSRF token. Before enabling dashboard mutations, provide
 `APP_AUTH_USERNAME`, `APP_AUTH_PASSWORD` (at least 16 characters), and
 `APP_SESSION_SECRET_KEY` (at least 32 bytes) through the deployment's protected
 environment/secret store. The application does not generate or print secrets;
@@ -30,7 +35,7 @@ state checks.
 
 ## Etsy bağlantısı (read-only)
 
-ZiraelDesigns Content Studio Etsy Open API v3 için OAuth 2.0 Authorization Code + PKCE akışını destekler. Bağlantı yalnızca mağaza ve aktif listing verilerini okumak içindir; Etsy'ye hiçbir veri yazılmaz veya değiştirilmez.
+ZiraelAutomation Content Studio, yapılandırıldığında Etsy Open API v3 için OAuth 2.0 Authorization Code + PKCE tabanlı isteğe bağlı bir read-only bağlantıyı destekler. Bağlantı yalnızca mağaza ve aktif listing verilerini okumak içindir; Etsy'ye hiçbir veri yazılmaz veya listing oluşturulup değiştirilmez.
 
 1. Etsy Developer portalında uygulamanızı oluşturun ve tam olarak `ETSY_REDIRECT_URI` değerini callback URL olarak kaydedin. Etsy callback URL'sinin HTTPS olmasını ve karakter karakter eşleşmesini ister.
 2. `.env.example` dosyasını `.env` olarak kopyalayın ve aşağıdaki gerçek değerleri yalnızca yerel `.env` dosyanıza girin:
@@ -51,11 +56,11 @@ Pinterest API v5 için OAuth 2.0 Authorization Code akışı kullanılır. `.env
 - `PINTEREST_REDIRECT_URI` (Pinterest uygulama ayarlarında kayıtlı değerle birebir aynı olmalı)
 - `PINTEREST_TOKEN_ENCRYPTION_KEY` (Fernet anahtarı)
 
-Dashboard'dan **Connect Pinterest** seçeneğini kullanın. CSRF koruması için tek kullanımlık OAuth state değeri sunucu tarafında tutulur. Access ve refresh token'ları kaynak koda yazılmaz ve SQLite içinde Fernet ile şifreli saklanır. İstenen minimum izinler `user_accounts:read`, `boards:read`, `pins:read` ve Pin yayınlama hazırlığı için `pins:write` değerleridir. `boards:write` istenmez.
+Dashboard'dan **Connect Pinterest** seçeneğini kullanın. CSRF koruması için tek kullanımlık OAuth state değeri sunucu tarafında tutulur. Access ve refresh token'ları kaynak koda yazılmaz ve SQLite içinde Fernet ile şifreli saklanır. İstenen izinler, bağlanan hesabı tanımak için `user_accounts:read`, kullanıcının hedef board'unu seçmek için `boards:read` ve seçilen Pin'i oluşturmak için `pins:write` ile sınırlıdır. Bu yayınlama amacı için kullanılmayan `pins:read` ve `boards:write` istenmez. Analytics ve Pin okuma izinleri bu kapsamda etkinleştirilmemiştir.
 
 Pinterest v5 HTTP adapter'ı resmi API hostlarını kullanır; production varsayılandır. İzole Sandbox için `.env` içinde `PINTEREST_API_BASE_URL=https://api-sandbox.pinterest.com/v5` ayarlanabilir. İstemci timeout uygular, hata sınıflarını ayırır ve token/secret değerlerini loglamaz. Create Pin görsel kaynağı `image_url` biçimindedir; yerel oluşturulmuş dosyalar yalnızca `PUBLIC_BASE_URL` üzerinden herkese açık HTTPS URL'ye çevrilir. Yerel dosya yolu veya güvenli olmayan URL reddedilir.
 
-API adapter'ı hesap/board okuma, Pin oluşturma/okuma/güncelleme/silme işlemlerini destekler. `PinterestPublisher` API sağlayıcısı `PINTEREST_PUBLISH_ENABLED=false` varsayılanıyla kapalıdır ve mevcut scheduler/worker'a bağlanmamıştır. Bu nedenle bu aşamada Pin yayınlama otomatik başlamaz. Başarılı bir API Create Pin yanıtındaki dış Pin kimliğini yerel `PublishedPinterestPin` kaydına aktarma işi mevcut idempotent publisher koordinatöründe tamamlanır.
+Uygulamanın Pinterest API kullanım amacı, hesabı bağlayan kişinin seçtiği Pin'leri seçtiği board'a belirlediği zamanlarda ve sayıda yayımlamak üzere kontrollü bir zamanlama akışı kurmaktır. Bugünkü production uygulamasında otomatik yayınlama kapalıdır ve publisher mevcut günlük scheduler/worker'a bağlı değildir; API erişimi tek başına bu akışı tamamlamaz. Onay ve uygulama entegrasyonu sonrasında yayınlama yalnızca kullanıcının açıkça seçtiği içerik ve zamanlama için etkinleştirilmelidir. `PinterestPublisher` fail-closed koordinatörü ve provider sınırı mevcuttur; gerçek çağrı `PINTEREST_PUBLISH_ENABLED=false` iken yapılmaz.
 
 ## AI Pin creative üretimi
 

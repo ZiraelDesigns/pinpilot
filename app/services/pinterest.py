@@ -18,8 +18,10 @@ from app.services.pinterest_api import PinterestApiClient, PinterestIntegrationE
 
 PINTEREST_AUTHORIZE_URL = "https://www.pinterest.com/oauth/"
 PINTEREST_TOKEN_URL = "https://api.pinterest.com/v5/oauth/token"
-# Explicitly limited to the scopes requested for the planned PinPilot workflow.
-PINTEREST_SCOPES = ("user_accounts:read", "boards:read", "pins:read", "pins:write")
+# Minimum scopes for linking the authorized account, selecting one of its
+# boards, and creating operator-selected Pins. Reading Pins/analytics is not
+# required by the current scheduled-publishing use case.
+PINTEREST_SCOPES = ("user_accounts:read", "boards:read", "pins:write")
 
 
 class PinterestConfigurationError(PinterestIntegrationError):

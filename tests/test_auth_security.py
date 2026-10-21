@@ -68,7 +68,7 @@ def test_anonymous_private_reads_are_blocked_while_public_pages_remain_open(monk
 
         landing = client.get("/", follow_redirects=False)
         assert landing.status_code == 200
-        assert "ZiraelDesigns" in landing.text
+        assert "ZiraelAutomation" in landing.text
         assert "Dashboard action test product" not in landing.text
         dashboard = client.get("/dashboard", follow_redirects=False)
         assert dashboard.status_code == 303
@@ -139,7 +139,8 @@ def test_login_requires_login_csrf_and_sets_hardened_expiring_admin_cookie(monke
     with TestClient(app, base_url="https://testserver") as client:
         login_page = client.get("/auth/login")
         assert login_page.status_code == 200
-        assert "ZiraelDesigns Content Studio" in login_page.text
+        assert "ZiraelAutomation Content Studio" in login_page.text
+        assert "ZiraelDesigns" not in login_page.text
         assert "pinpilot" not in login_page.text.casefold()
         missing_csrf = client.post("/auth/login", data={"username": "owner", "password": "a-long-test-password-123"})
         assert missing_csrf.status_code == 403

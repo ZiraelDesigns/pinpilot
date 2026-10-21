@@ -30,7 +30,7 @@ def test_authorization_redirect_uses_state_and_requested_scopes(monkeypatch):
     query = parse_qs(urlparse(response.headers["location"]).query)
     assert response.status_code == 302
     assert response.headers["location"].startswith("https://www.pinterest.com/oauth/")
-    assert query["scope"] == ["user_accounts:read,boards:read,pins:read,pins:write"]
+    assert query["scope"] == ["user_accounts:read,boards:read,pins:write"]
     assert len(query["state"][0]) >= 32
 
 

@@ -10,7 +10,7 @@ ENV_FILE = PROJECT_ROOT / ".env"
 class Settings(BaseSettings):
     """Application settings loaded from OS variables or the project-root .env file."""
 
-    app_name: str = "ZiraelDesigns Content Studio"
+    app_name: str = "ZiraelAutomation Content Studio"
     database_url: str = "sqlite:///./pinpilot.db"
     # Mutating dashboard/API access is disabled until all admin auth settings exist.
     app_auth_username: str | None = None

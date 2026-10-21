@@ -18,7 +18,7 @@ def test_health_endpoint():
         response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "ZiraelDesigns Content Studio"}
+    assert response.json() == {"status": "ok", "service": "ZiraelAutomation Content Studio"}
 
 
 def test_privacy_policy_is_served_from_public_route():
@@ -30,24 +30,56 @@ def test_privacy_policy_is_served_from_public_route():
     assert "Privacy Policy" in response.text
     assert "https://ziraelautomation.vesvada.store/privacy-policy.html" in response.text
     assert "pinpilot.vesvada.store" not in response.text
-    assert "ZiraelDesigns Content Studio" in response.text
+    assert "ZiraelAutomation Content Studio" in response.text
+    assert "ZiraelDesigns Content Studio" not in response.text
+    assert "ziraelamz@gmail.com" in response.text
+    assert "personal project and private workspace" in response.text
+    assert "selected Pins and publication schedule" in response.text
+    assert "automatic production publishing is currently disabled" in response.text.casefold()
+    assert "user_accounts:read" in response.text
+    assert "boards:read" in response.text
+    assert "pins:write" in response.text
+    assert "does not request <code>pins:read</code>" in response.text
+    assert "October 21, 2026" in response.text
+    assert "No fixed automatic retention period" in response.text
+    assert "legal identity" in response.text
+    assert 'href="/static/public-info.css"' in response.text
     assert "pinpilot" not in response.text.casefold()
 
 
-def test_public_homepage_uses_ziraeldesigns_content_studio_brand_and_links_privacy_policy():
+def test_public_homepage_uses_ziraelautomation_brand_and_links_privacy_policy():
     with TestClient(app) as client:
         response = client.get("/")
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert "ZiraelDesigns Content Studio" in response.text
+    assert "ZiraelAutomation Content Studio" in response.text
+    assert "ZiraelDesigns" not in response.text
     assert "pinpilot" not in response.text.casefold()
     assert "Pinterest content planning" in response.text
-    assert "SEO metadata" in response.text
-    assert 'property="og:title" content="ZiraelDesigns Content Studio' in response.text
-    assert 'name="twitter:title" content="ZiraelDesigns Content Studio' in response.text
-    assert "Automatic Pinterest publishing and production analytics collection are not enabled" in response.text
+    assert "Pin titles, descriptions, and keyword metadata" in response.text
+    assert "selected Pinterest Pins" in response.text
+    assert "chosen schedule" in response.text
+    assert "automatic production publishing is not yet enabled" in response.text.casefold()
+    assert "completion of the scheduled publisher integration" in response.text
+    assert 'property="og:title" content="ZiraelAutomation Content Studio' in response.text
+    assert 'name="twitter:title" content="ZiraelAutomation Content Studio' in response.text
+    normalized_text = " ".join(response.text.split()).casefold()
+    assert "automatic production publishing is not yet enabled" in normalized_text
+    assert "production ai generation pipeline and production analytics collection are also currently disabled" in normalized_text
     assert 'href="/privacy-policy.html"' in response.text
+    assert "ziraelamz@gmail.com" in response.text
+    assert 'href="/static/public-info.css"' in response.text
+
+
+def test_public_information_styles_are_local_and_responsive():
+    with TestClient(app) as client:
+        response = client.get("/static/public-info.css")
+
+    assert response.status_code == 200
+    assert "@media (max-width: 760px)" in response.text
+    assert "@media (prefers-reduced-motion: reduce)" in response.text
+    assert "fonts.googleapis.com" not in response.text
 
 
 def test_public_openapi_metadata_uses_public_brand():
@@ -55,7 +87,7 @@ def test_public_openapi_metadata_uses_public_brand():
         response = client.get("/openapi.json")
 
     assert response.status_code == 200
-    assert response.json()["info"]["title"] == "ZiraelDesigns Content Studio"
+    assert response.json()["info"]["title"] == "ZiraelAutomation Content Studio"
     assert "pinpilot" not in response.text.casefold()
 
 

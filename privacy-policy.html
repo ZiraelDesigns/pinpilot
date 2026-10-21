@@ -1,102 +1,124 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="canonical" href="https://ziraelautomation.vesvada.store/privacy-policy.html">
-    <meta name="description" content="Privacy Policy for ZiraelDesigns Content Studio, developed and operated by ZiraelDesigns.">
-    <meta property="og:type" content="website">
-    <meta property="og:site_name" content="ZiraelDesigns Content Studio">
-    <meta property="og:url" content="https://ziraelautomation.vesvada.store/privacy-policy.html">
-    <meta property="og:title" content="Privacy Policy | ZiraelDesigns Content Studio">
-    <meta property="og:description" content="Learn how ZiraelDesigns Content Studio handles information from connected services.">
-    <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="Privacy Policy | ZiraelDesigns Content Studio">
-    <meta name="twitter:description" content="Learn how ZiraelDesigns Content Studio handles information from connected services.">
-    <title>Privacy Policy | ZiraelDesigns Content Studio</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f8f5">
+  <link rel="canonical" href="https://ziraelautomation.vesvada.store/privacy-policy.html">
+  <meta name="description" content="Privacy information for ZiraelAutomation Content Studio, a personal project for preparing and scheduling user-selected Pinterest Pins.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="ZiraelAutomation Content Studio">
+  <meta property="og:url" content="https://ziraelautomation.vesvada.store/privacy-policy.html">
+  <meta property="og:title" content="Privacy Policy | ZiraelAutomation Content Studio">
+  <meta property="og:description" content="Learn what information ZiraelAutomation Content Studio processes and how connected services are used.">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Privacy Policy | ZiraelAutomation Content Studio">
+  <meta name="twitter:description" content="Learn what information ZiraelAutomation Content Studio processes and how connected services are used.">
+  <title>Privacy Policy | ZiraelAutomation Content Studio</title>
+  <link rel="stylesheet" href="/static/public-info.css">
 </head>
-<body>
-    <h1>Privacy Policy</h1>
+<body class="policy-page">
+  <header class="site-header">
+    <a class="wordmark" href="/" aria-label="ZiraelAutomation Content Studio home">
+      <span class="wordmark-mark" aria-hidden="true">ZA</span>
+      <span><strong>ZiraelAutomation</strong><small>Content Studio</small></span>
+    </a>
+    <nav aria-label="Main navigation"><a href="/">Home</a><a class="nav-login" href="/auth/login">Administrator sign in</a></nav>
+  </header>
 
-    <p><strong>Last updated:</strong> September 7, 2026</p>
+  <main class="policy-main">
+    <div class="policy-heading">
+      <p class="eyebrow">ZiraelAutomation Content Studio</p>
+      <h1>Privacy Policy</h1>
+      <p class="policy-intro">This notice describes information processed by this personal project while preparing user-selected Pins and planning a publishing schedule, along with connected-service features and current controls.</p>
+      <p class="updated"><strong>Last updated:</strong> October 21, 2026</p>
+    </div>
 
-    <h2>1. Introduction</h2>
-    <p>
-        ZiraelDesigns Content Studio is a private content planning workspace
-        developed by ZiraelDesigns to prepare, organize, and schedule Pinterest
-        content related to an Etsy shop. Automatic Pinterest publishing and
-        production analytics collection are currently not enabled.
-    </p>
-    <p>
-        Website: <a href="https://ziraelautomation.vesvada.store">https://ziraelautomation.vesvada.store</a>.
-    </p>
+    <aside class="policy-notice" aria-labelledby="identity-notice-title">
+      <strong id="identity-notice-title">Operator identity clarification</strong>
+      <p>ZiraelAutomation is the public-facing brand for this service. The legal identity of the person or entity responsible for processing has not been verified for this notice. That identity must be confirmed and added before relying on this page for a formal privacy disclosure or a new platform application.</p>
+    </aside>
 
-    <h2>2. Information We Access</h2>
-    <p>
-        ZiraelDesigns Content Studio may access information from connected services, including
-        Etsy and Pinterest, only when authorized by the account owner.
-    </p>
+    <article class="policy-content">
+      <section>
+        <h2>1. About this service</h2>
+        <p>ZiraelAutomation Content Studio is a personal project and private workspace. Its intended Pinterest API use is to let the account holder authorize their Pinterest account, select the Pins and destination boards, set the number of Pins and publication times, and have those selected Pins published according to that schedule. A scheduled item is currently only a local planning record; it does not mean a Pin was published.</p>
+        <p>Automatic production publishing is currently disabled, and the scheduled publisher is not yet connected to the production scheduler. Publishing depends on Pinterest API access, the account holder's authorization, and completion of that integration. The production AI generation pipeline and Pinterest analytics collection are also disabled. This service is not affiliated with or endorsed by Pinterest.</p>
+        <p><strong>Website:</strong> <a href="https://ziraelautomation.vesvada.store/">https://ziraelautomation.vesvada.store/</a></p>
+      </section>
 
-    <p>
-        This information may include Etsy product listing information,
-        Pinterest boards, Pins, and, if separately authorized and enabled in
-        the future, Pinterest analytics data. Production analytics collection
-        is currently disabled.
-    </p>
+      <section>
+        <h2>2. Information processed</h2>
+        <p>The application is a private, single-administrator workspace and does not offer public account registration. Depending on which integration or feature the administrator uses, it can process:</p>
+        <ul>
+          <li><strong>Administrator access and technical requests:</strong> the configured username and short-lived session and login-CSRF cookie values needed to authenticate and protect browser requests. The web server or hosting layer may record technical request data such as IP address, request path, timestamp, user-agent, and response status; the active production log fields and retention settings have not been verified for this notice. The public pages do not include advertising or analytics trackers.</li>
+          <li><strong>Content and product context:</strong> product title, description, tags, image references, price/currency, destination URL, Pin creative drafts, generated SEO text, keyword metadata, board recommendations, calendar context, and local schedule/history records.</li>
+          <li><strong>Pinterest connection and planned publication data:</strong> account identifier/profile details returned by Pinterest, board identifiers and metadata, and the Pin content, destination board, image URL, and schedule selected by the account holder. The current OAuth code requests <code>user_accounts:read</code> to identify the authorized account, <code>boards:read</code> to list/select its boards, and <code>pins:write</code> for the intended Pin-creation operation. It does not request <code>pins:read</code> for this workflow. Publishing remains disabled in production; requesting a write scope does not mean a Pin has been or will automatically be published.</li>
+          <li><strong>Pinterest performance data:</strong> Pin or account metrics such as impressions, saves, clicks, outbound clicks, and engagements only if collection is authorized and explicitly enabled. Production collection is currently disabled; no live collection is represented by this policy.</li>
+          <li><strong>Optional Etsy catalog context:</strong> if the administrator connects Etsy and requests a sync, the app's read-only integration can retrieve shop identity and active listing fields such as listing title, description, tags, price, quantity, URL, and image references. It does not request Etsy customer or order data and does not write or create Etsy listings.</li>
+        </ul>
+        <p>Information can be provided by the administrator in the workspace, returned by a connected provider's API after authorization, or generated from existing content when an AI provider is explicitly configured and invoked. The app does not request Etsy customer or order information.</p>
+      </section>
 
-    <h2>3. How We Use Information</h2>
-    <p>
-        Information accessed through connected services is used to prepare
-        Pinterest content and SEO metadata, organize and schedule planned
-        content, and support analytics review when authorized analytics data
-        is available. Automatic Pinterest publishing and production analytics
-        collection are currently disabled.
-    </p>
+      <section>
+        <h2>3. Purposes and processing choices</h2>
+        <p>Information is used to authenticate the administrator, maintain the workspace, and prepare the account holder's selected Pins and publication schedule. If the Pinterest integration is approved and later activated, the selected Pin content and schedule will be used to create Pins on the account holder's chosen boards at the times and in the quantities they set. No unselected content is intended for publication. Pinterest API access is being requested for that purpose; automatic production publishing is not active today. Connected-service data is not used for advertising targeting, competitor research, or platform-wide benchmarking.</p>
+        <p>The application includes deterministic performance-learning and ranking code. Pinterest performance data is not sent to Gemini, OpenAI, or another AI provider for model training, fine-tuning, model improvement, or prompt input.</p>
+      </section>
 
-    <h2>4. Data Storage</h2>
-    <p>
-        ZiraelDesigns Content Studio does not sell or rent personal information to third parties.
-        Authentication credentials and access tokens are stored securely and
-        are used only to provide the requested integrations.
-    </p>
+      <section>
+        <h2>4. Legal basis and controller responsibility</h2>
+        <p>The purposes and data categories are described above. The legal basis for each processing activity, the controller's verified legal identity, and the applicable jurisdiction have not been provided to the service operator for this notice. They must be determined and stated by the responsible controller before this page is used as a formal statutory notice. No specific legal basis is asserted here.</p>
+      </section>
 
-    <h2>5. Third-Party Services</h2>
-    <p>
-        ZiraelDesigns Content Studio may connect to third-party services such as Etsy and Pinterest.
-        Their use of information is governed by their respective privacy
-        policies and terms.
-    </p>
+      <section>
+        <h2>5. AI and other service providers</h2>
+        <p>AI providers are configurable and automated tests use mock providers. Production AI generation is currently disabled. If a text or image provider is separately configured and explicitly invoked in a future workflow, the relevant content context may be sent to that provider; these are separate functions and are not needed to publish user-selected Pins through Pinterest. Pinterest performance data is not sent to AI providers.</p>
+        <p>Pinterest receives information only through API operations supported by the connected account and currently authorized scopes. Etsy is contacted only when its optional read-only integration is configured and invoked. Provider information is available in the <a href="https://policy.pinterest.com/en/privacy-policy" rel="noopener noreferrer">Pinterest Privacy Policy</a>, <a href="https://www.etsy.com/legal/privacy" rel="noopener noreferrer">Etsy Privacy Policy</a>, <a href="https://policies.google.com/privacy" rel="noopener noreferrer">Google Privacy Policy</a>, and <a href="https://openai.com/policies/privacy-policy/" rel="noopener noreferrer">OpenAI Privacy Policy</a>. The operator must confirm applicable provider terms, processing locations, and transfer safeguards before enabling those services for personal data.</p>
+      </section>
 
-    <h2>6. Data Sharing</h2>
-    <p>
-        ZiraelDesigns Content Studio does not share accessed account information with third parties
-        except when necessary to operate the requested integrations or when
-        required by law.
-    </p>
+      <section>
+        <h2>6. Storage, access, and security</h2>
+        <p>Application records are stored in the service's configured database and generated files are stored by the application. Pinterest and Etsy OAuth access and refresh tokens are encrypted before they are stored in the database using application-configured encryption keys. Administrator sessions use signed, expiring cookies. Authentication cookies are HttpOnly and SameSite=Lax; the Secure attribute is controlled by <code>APP_SESSION_COOKIE_SECURE</code> and defaults to true.</p>
+        <p>These implementation measures do not guarantee that all risks are eliminated. The operator should restrict access to the server, database, encryption configuration, and backups.</p>
+      </section>
 
-    <h2>7. Data Deletion</h2>
-    <p>
-        The account owner may disconnect the integrations at any time.
-        Upon request, stored application data associated with the account can
-        be deleted.
-    </p>
+      <section>
+        <h2>7. Retention and disconnecting services</h2>
+        <p>No fixed automatic retention period or scheduled full-record purge is implemented. Local records may remain in the workspace until an administrator removes them or applies an operational retention decision. A retention period for each record type has not been set and must be confirmed by the operator.</p>
+        <p>Disconnecting Pinterest removes its stored connection credentials and cached account/board records, but some linked publication and analytics history is deliberately preserved locally. Disconnecting Etsy removes its stored connection credentials, synced listing records, and sync-run records; product and creative records derived from or associated with listings may remain. Disconnecting a service is therefore not a complete deletion of all related local history.</p>
+        <p>There is no self-service full-account deletion endpoint. To ask about access, correction, or deletion of information, email <a href="mailto:ziraelamz@gmail.com">ziraelamz@gmail.com</a>. Requests require review by the responsible operator; sending a request does not itself erase records. The operator must establish and follow a documented handling and retention process.</p>
+      </section>
 
-    <h2>8. Security</h2>
-    <p>
-        Reasonable technical measures are used to protect authentication
-        credentials, access tokens, and application data.
-    </p>
+      <section>
+        <h2>8. Disclosure and international processing</h2>
+        <p>For the intended Pinterest workflow, the selected Pin content, image URL, destination board, and publication request would be transmitted to Pinterest only after the account holder authorizes the account and publishing is enabled. That production publishing is currently disabled. Other separately configured optional integrations may transmit the information needed for their specific operation. The application does not sell connected-account information, combine Pinterest data with third-party data for advertising, or provide Pinterest performance data to AI providers.</p>
+        <p>Those providers and the hosting environment may process information in locations outside the administrator's country. The hosting location, provider-specific processing locations, and legal transfer mechanism have not been established in this notice. The responsible operator must verify them and document any safeguards required by applicable law before using the service with personal data.</p>
+      </section>
 
-    <h2>9. Contact</h2>
-    <p>
-        For questions regarding this privacy policy, contact ZiraelDesigns
-        through the contact information associated with the application.
-    </p>
+      <section>
+        <h2>9. Cookies</h2>
+        <p>The administrator login uses a session cookie and a temporary login-CSRF cookie to maintain authenticated access and protect login requests. Authentication cookies are HttpOnly and SameSite=Lax; Secure is controlled by <code>APP_SESSION_COOKIE_SECURE</code> and defaults to true. The public landing and policy pages do not set these login cookies and do not include advertising trackers.</p>
+      </section>
 
-    <h2>10. Changes to This Policy</h2>
-    <p>
-        This privacy policy may be updated from time to time. Any changes will
-        be published on this page.
-    </p>
+      <section>
+        <h2>10. Privacy rights and contact</h2>
+        <p>Depending on applicable law, individuals may be able to ask whether their information is processed and obtain information about that processing, request access or correction, seek deletion where permitted, learn about recipients of a correction or deletion, object to certain processing (including automated analysis where the law provides that right), and seek remedies or complain to a supervisory authority. Requests can be sent to <a href="mailto:ziraelamz@gmail.com">ziraelamz@gmail.com</a>. The responsible operator's verified legal identity, address, applicable jurisdiction, and request-handling process still need to be confirmed and published where required by law.</p>
+      </section>
+
+      <section>
+        <h2>11. Changes to this notice</h2>
+        <p>This notice may be updated when the service or its data practices change. The updated date above will be revised when a new version is published.</p>
+      </section>
+    </article>
+
+    <div class="policy-back"><a class="text-link" href="/">← Back to ZiraelAutomation Content Studio</a></div>
+  </main>
+  <footer class="site-footer policy-footer">
+    <a class="wordmark footer-wordmark" href="/" aria-label="ZiraelAutomation Content Studio home"><span class="wordmark-mark" aria-hidden="true">ZA</span><span><strong>ZiraelAutomation</strong><small>Content Studio</small></span></a>
+    <p>Privacy questions: <a href="mailto:ziraelamz@gmail.com">ziraelamz@gmail.com</a></p>
+    <nav aria-label="Footer navigation"><a href="/">Home</a><a href="/privacy-policy.html">Privacy Policy</a></nav>
+    <small class="copyright">© 2026 ZiraelAutomation Content Studio</small>
+  </footer>
 </body>
 </html>
